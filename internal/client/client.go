@@ -41,7 +41,7 @@ const (
 )
 
 var (
-	CookiesReset = errors.New("cookies reset")
+	ErrCookiesReset = errors.New("cookies reset")
 )
 
 // closeBody closes an io.ReadCloser, logging any error. Use with defer on response bodies.
@@ -747,7 +747,7 @@ func (c *Client) refreshWebSession() error {
 			err = c.ResetCookies()
 			if err == nil {
 				log.Debug("cookies reset successfully")
-				return CookiesReset
+				return ErrCookiesReset
 			}
 			log.Error("failed to reset cookies", zap.Error(err))
 		}

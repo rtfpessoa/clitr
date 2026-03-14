@@ -220,8 +220,8 @@ func TestRefreshWebSession_Expired(t *testing.T) {
 
 	err = client.refreshWebSession()
 	require.Error(t, err)
-	// When AUTHENTICATION_ERROR is detected, cookies are reset and CookiesReset is returned
-	assert.ErrorIs(t, err, CookiesReset)
+	// When AUTHENTICATION_ERROR is detected, cookies are reset and ErrCookiesReset is returned
+	assert.ErrorIs(t, err, ErrCookiesReset)
 }
 
 // setupWSTestServer creates a test server that handles WebSocket connections

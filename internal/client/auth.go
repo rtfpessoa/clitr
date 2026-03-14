@@ -195,7 +195,7 @@ func (c *Client) resumeWebSession() bool {
 	// Try to fetch settings to validate the session
 	_, err := c.Settings()
 	if err != nil {
-		if errors.Is(err, CookiesReset) {
+		if errors.Is(err, ErrCookiesReset) {
 			return false
 		}
 
