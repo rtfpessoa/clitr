@@ -47,9 +47,8 @@ func Error(msg string, fields ...zap.Field) {
 	logger.Error(msg, fields...)
 }
 
-func Sync() error {
+func Sync() {
 	// Ignore errors from syncing stderr/stdout (common on some systems)
 	// See: https://github.com/uber-go/zap/issues/880
 	_ = logger.Sync()
-	return nil
 }

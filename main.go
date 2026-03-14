@@ -30,12 +30,7 @@ type rootConfig struct {
 func main() {
 	config := &rootConfig{}
 
-	defer func() {
-		err := log.Sync()
-		if err != nil {
-			fmt.Printf("Failed to sync logger: %v\n", err)
-		}
-	}()
+	defer log.Sync()
 
 	rootCmd := &cobra.Command{
 		Use:   "clitr",
