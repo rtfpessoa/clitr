@@ -4,6 +4,10 @@
 
 A Go CLI tool to export transaction history from [Trade Republic](https://traderepublic.com/) to CSV format.
 
+<p align="center">
+  <img src="assets/clitr-banner.png" alt="clitr banner">
+</p>
+
 ## Features
 
 - **Three-Step Workflow**: Fetch raw data, export to CSV, and self-heal structs when the API changes
