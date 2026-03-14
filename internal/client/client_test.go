@@ -267,11 +267,11 @@ func TestSubscribe_IncrementsID(t *testing.T) {
 	wsURL := "ws://" + strings.TrimPrefix(server.URL, "http://")
 	client.setWSHost(wsURL)
 
-	subID1, err := client.Portfolio(context.Background())
+	subID1, err := client.Subscribe(context.Background(), map[string]interface{}{"type": "portfolio"})
 	require.NoError(t, err)
 	assert.Equal(t, "0", subID1)
 
-	subID2, err := client.Cash(context.Background())
+	subID2, err := client.Subscribe(context.Background(), map[string]interface{}{"type": "cash"})
 	require.NoError(t, err)
 	assert.Equal(t, "1", subID2)
 
