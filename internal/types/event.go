@@ -541,7 +541,7 @@ func parseFloatFromText(text string) *float64 {
 	}
 
 	val, err := strconv.ParseFloat(cleaned, 64)
-	if err != nil || val == 0 {
+	if err != nil {
 		return nil
 	}
 
