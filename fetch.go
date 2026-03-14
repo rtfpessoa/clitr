@@ -167,7 +167,7 @@ func fetchEvents(ctx context.Context, trclient *client.Client, eventsDir string,
 			return nil, fmt.Errorf("failed to load metadata: %w", err)
 		}
 		if meta == nil {
-			log.Info("No previous events found, going to to a full fetch")
+			log.Info("No previous events found, going to do a full fetch")
 		} else {
 			if meta.PendingCount > 0 {
 				log.Info("Found pending transactions from last fetch", zap.Int("count", meta.PendingCount))
@@ -416,10 +416,12 @@ func fetchTimelinePage(ctx context.Context, trclient *client.Client, after *stri
 				}
 
 				return rawItems, cursor, nil
-			} else {
-				log.Warn("Received message for unknown subscription", zap.Any("msg", msg))
 			}
 
+			log.Warn("Received message for unknown subscription", zap.Any("msg", msg))
+
+		case <-ctx.Done():
+			return nil, nil, ctx.Err()
 		case <-time.After(30 * time.Second):
 			return nil, nil, fmt.Errorf("timeout waiting for timeline response")
 		}
@@ -536,6 +538,11 @@ detailLoop:
 					return nil, err
 				}
 			}
+		case <-ctx.Done():
+			log.Warn("Context cancelled while waiting for details",
+				zap.Int("received", detailsReceived),
+				zap.Int("total", totalDetails))
+			break detailLoop
 		case <-timer.C:
 			log.Warn("Timeout waiting for details",
 				zap.Int("received", detailsReceived),
