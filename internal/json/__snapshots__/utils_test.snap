@@ -1,0 +1,7 @@
+
+[TestMarshal_IndentedOutput - 1]
+{
+  "name": "test",
+  "value": 42
+}
+---
