@@ -364,7 +364,10 @@ func fetchRawEvents(ctx context.Context, trclient *client.Client, fetchDirection
 
 		var eventCursor *string
 		if nextPageCursor.After != nil {
-			eventCursor = changeCursor(nextPageCursor.After, FetchDirectionBefore)
+			eventCursor, err = changeCursor(nextPageCursor.After, FetchDirectionBefore)
+			if err != nil {
+				return nil, fmt.Errorf("failed to change cursor direction: %w", err)
+			}
 		} else {
 			eventCursor = cursor
 		}
@@ -590,35 +593,32 @@ type cursor struct {
 	PageDirection FetchDirection `json:"pageDirection"`
 }
 
-func changeCursor(cursorStr *string, direction FetchDirection) *string {
+func changeCursor(cursorStr *string, direction FetchDirection) (*string, error) {
 	if cursorStr == nil {
 		if direction == FetchDirectionBefore {
-			log.Error("Cannot change direction to before from empty cursor")
+			return nil, fmt.Errorf("cannot change direction to before from empty cursor")
 		}
-		return nil
+		return nil, nil
 	}
 
 	bytes, err := base64.RawStdEncoding.DecodeString(*cursorStr)
 	if err != nil {
-		log.Error("Failed to decode cursor", zap.Error(err))
-		return nil
+		return nil, fmt.Errorf("failed to decode cursor: %w", err)
 	}
 
 	parsed := &cursor{}
 	err = json.Unmarshal(bytes, parsed)
 	if err != nil {
-		log.Error("Failed to decode cursor", zap.Error(err))
-		return nil
+		return nil, fmt.Errorf("failed to unmarshal cursor: %w", err)
 	}
 
 	parsed.PageDirection = direction
 	cursorBytes, err := json.Marshal(parsed)
 	if err != nil {
-		log.Error("Failed to encode cursor", zap.Error(err))
-		return nil
+		return nil, fmt.Errorf("failed to marshal cursor: %w", err)
 	}
 
 	newCursor := base64.RawStdEncoding.EncodeToString(cursorBytes)
 
-	return &newCursor
+	return &newCursor, nil
 }

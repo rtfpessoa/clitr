@@ -85,7 +85,8 @@ func TestChangeCursor_DirectionChange(t *testing.T) {
 	cursorJSON := `{"keyset":{"eventId":"test-123","timestamp":"2024-01-15T10:30:00Z"},"pageDirection":"after"}`
 	encoded := base64.RawStdEncoding.EncodeToString([]byte(cursorJSON))
 
-	result := changeCursor(&encoded, FetchDirectionBefore)
+	result, err := changeCursor(&encoded, FetchDirectionBefore)
+	require.NoError(t, err)
 	require.NotNil(t, result)
 
 	// Decode the result to verify direction changed
@@ -96,8 +97,14 @@ func TestChangeCursor_DirectionChange(t *testing.T) {
 }
 
 func TestChangeCursor_NilInput(t *testing.T) {
-	result := changeCursor(nil, FetchDirectionAfter)
+	result, err := changeCursor(nil, FetchDirectionAfter)
+	require.NoError(t, err)
 	assert.Nil(t, result)
+}
+
+func TestChangeCursor_NilInputBeforeDirection(t *testing.T) {
+	_, err := changeCursor(nil, FetchDirectionBefore)
+	require.Error(t, err)
 }
 
 func TestSaveMetadata_WithPendingItems(t *testing.T) {
