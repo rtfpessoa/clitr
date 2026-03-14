@@ -1,0 +1,123 @@
+
+[TestTimelineTransactions_WithoutAfter - 1]
+connect 33 {
+  "clientId": "app.traderepublic.com",
+  "clientVersion": "11.4.1",
+  "locale": "en",
+  "platformId": "webtrading",
+  "platformVersion": "chrome - 142.0.0"
+}
+---
+
+[TestTimelineTransactions_WithoutAfter - 2]
+sub 0 {
+  "type": "timelineTransactions"
+}
+---
+
+[TestTimelineTransactions_WithAfter - 1]
+connect 33 {
+  "clientId": "app.traderepublic.com",
+  "clientVersion": "11.4.1",
+  "locale": "en",
+  "platformId": "webtrading",
+  "platformVersion": "chrome - 142.0.0"
+}
+---
+
+[TestTimelineTransactions_WithAfter - 2]
+sub 0 {
+  "after": "cursor123",
+  "type": "timelineTransactions"
+}
+---
+
+[TestUnsubscribe_RemovesSubscription - 1]
+connect 33 {
+  "clientId": "app.traderepublic.com",
+  "clientVersion": "11.4.1",
+  "locale": "en",
+  "platformId": "webtrading",
+  "platformVersion": "chrome - 142.0.0"
+}
+---
+
+[TestUnsubscribe_RemovesSubscription - 2]
+sub 0 {
+  "type": "portfolio"
+}
+---
+
+[TestUnsubscribe_RemovesSubscription - 3]
+unsub 0
+---
+
+[TestSubscribe_IncrementsID - 1]
+connect 33 {
+  "clientId": "app.traderepublic.com",
+  "clientVersion": "11.4.1",
+  "locale": "en",
+  "platformId": "webtrading",
+  "platformVersion": "chrome - 142.0.0"
+}
+---
+
+[TestSubscribe_IncrementsID - 2]
+sub 0 {
+  "type": "portfolio"
+}
+---
+
+[TestSubscribe_IncrementsID - 3]
+sub 1 {
+  "type": "cash"
+}
+---
+
+[TestReceiveLoop_FullMessage - 1]
+connect 33 {
+  "clientId": "app.traderepublic.com",
+  "clientVersion": "11.4.1",
+  "locale": "en",
+  "platformId": "webtrading",
+  "platformVersion": "chrome - 142.0.0"
+}
+---
+
+[TestReceiveLoop_FullMessage - 2]
+sub 0 {
+  "type": "portfolio"
+}
+---
+
+[TestReceiveLoop_ErrorMessage - 1]
+connect 33 {
+  "clientId": "app.traderepublic.com",
+  "clientVersion": "11.4.1",
+  "locale": "en",
+  "platformId": "webtrading",
+  "platformVersion": "chrome - 142.0.0"
+}
+---
+
+[TestReceiveLoop_ErrorMessage - 2]
+sub 0 {
+  "type": "portfolio"
+}
+---
+
+[TestReceiveLoop_CompleteMessage - 1]
+connect 33 {
+  "clientId": "app.traderepublic.com",
+  "clientVersion": "11.4.1",
+  "locale": "en",
+  "platformId": "webtrading",
+  "platformVersion": "chrome - 142.0.0"
+}
+---
+
+[TestReceiveLoop_CompleteMessage - 2]
+sub 0 {
+  "type": "portfolio"
+}
+---
