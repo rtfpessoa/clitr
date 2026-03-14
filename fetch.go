@@ -66,7 +66,7 @@ func NewFetchCmd(rootConfig *rootConfig) *cobra.Command {
 		Long:  "Authenticate with Trade Republic and download all transaction data to JSON files",
 	}
 
-	fetchCmd.PersistentFlags().StringVar(&fetchConfig.phoneNo, phoneFlagKeyLong, phoneFlagKeyShort, "Phone number in international format (e.g., +4912345678)")
+	fetchCmd.PersistentFlags().StringVarP(&fetchConfig.phoneNo, phoneFlagKeyLong, phoneFlagKeyShort, "", "Phone number in international format (e.g., +4912345678)")
 	fetchCmd.PersistentFlags().BoolVarP(&fetchConfig.saveCredentials, saveCredentialsFlagKeyLong, saveCredentialsFlagKeyShort, false, "Save session cookies for future use")
 	fetchCmd.PersistentFlags().BoolVarP(&fetchConfig.incremental, incrementalFlagKeyLong, incrementalFlagKeyShort, false, "Fetch only new transactions and update pending ones")
 	fetchCmd.PersistentFlags().BoolVarP(&fetchConfig.reset, resetFlagKeyLong, resetFlagKeyShort, false, "Reset all: clear credentials and delete transaction data")
