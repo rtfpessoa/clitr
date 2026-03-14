@@ -1,0 +1,57 @@
+{
+  "timelineEvent": {
+    "id": "dividend-001",
+    "timestamp": "2024-03-15T08:00:00.000+0100",
+    "icon": "https://assets.traderepublic.com/img/logos/US5949181045/light.min.svg",
+    "title": "Microsoft Corp.",
+    "body": "",
+    "status": "EXECUTED",
+    "eventType": "ssp_corporate_action_invoice_cash",
+    "subtitle": "Dividend",
+    "amount": {
+      "value": 12.50,
+      "currency": "EUR",
+      "fractionDigits": 2
+    }
+  },
+  "details": {
+    "id": "dividend-001",
+    "sections": [
+      {
+        "title": "Overview",
+        "type": "table",
+        "data": [
+          {
+            "title": "Dividend per share",
+            "detail": {
+              "text": "0.75 USD",
+              "type": "text"
+            }
+          },
+          {
+            "title": "Shares",
+            "detail": {
+              "text": "20",
+              "type": "text"
+            }
+          },
+          {
+            "title": "Gross amount",
+            "detail": {
+              "text": "15.00 USD",
+              "type": "text"
+            }
+          },
+          {
+            "title": "Taxes",
+            "detail": {
+              "text": "-2.50 EUR",
+              "type": "text"
+            }
+          }
+        ]
+      }
+    ]
+  },
+  "pageCursor": null
+}

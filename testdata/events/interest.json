@@ -1,0 +1,57 @@
+{
+  "timelineEvent": {
+    "id": "interest-001",
+    "timestamp": "2024-04-01T00:00:00.000Z",
+    "icon": "interest",
+    "title": "Interest",
+    "body": "",
+    "status": "EXECUTED",
+    "eventType": "INTEREST_PAYOUT_CREATED",
+    "subtitle": "Cash account interest",
+    "amount": {
+      "value": 3.25,
+      "currency": "EUR",
+      "fractionDigits": 2
+    }
+  },
+  "details": {
+    "id": "interest-001",
+    "sections": [
+      {
+        "title": "Interest details",
+        "type": "table",
+        "data": [
+          {
+            "title": "Interest rate",
+            "detail": {
+              "text": "4.0% p.a.",
+              "type": "text"
+            }
+          },
+          {
+            "title": "Period",
+            "detail": {
+              "text": "March 2024",
+              "type": "text"
+            }
+          },
+          {
+            "title": "Gross interest",
+            "detail": {
+              "text": "4.00 EUR",
+              "type": "text"
+            }
+          },
+          {
+            "title": "Taxes",
+            "detail": {
+              "text": "-0.75 EUR",
+              "type": "text"
+            }
+          }
+        ]
+      }
+    ]
+  },
+  "pageCursor": null
+}

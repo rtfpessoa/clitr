@@ -1,0 +1,64 @@
+{
+  "timelineEvent": {
+    "id": "sell-order-001",
+    "timestamp": "2024-02-20T14:45:00.000+0100",
+    "icon": "https://assets.traderepublic.com/img/logos/DE0007164600/light.min.svg",
+    "title": "SAP SE",
+    "body": "",
+    "status": "EXECUTED",
+    "eventType": "order_executed",
+    "subtitle": "Sell Order",
+    "amount": {
+      "value": 250.75,
+      "currency": "EUR",
+      "fractionDigits": 2
+    }
+  },
+  "details": {
+    "id": "sell-order-001",
+    "sections": [
+      {
+        "title": "Transaction",
+        "type": "table",
+        "data": [
+          {
+            "title": "Shares",
+            "detail": {
+              "text": "2",
+              "type": "text"
+            }
+          },
+          {
+            "title": "Share price",
+            "detail": {
+              "text": "126.00 EUR",
+              "type": "text"
+            }
+          },
+          {
+            "title": "Total",
+            "detail": {
+              "text": "252.00 EUR",
+              "type": "text"
+            }
+          },
+          {
+            "title": "Fee",
+            "detail": {
+              "text": "1.00 EUR",
+              "type": "text"
+            }
+          },
+          {
+            "title": "Taxes",
+            "detail": {
+              "text": "0.25 EUR",
+              "type": "text"
+            }
+          }
+        ]
+      }
+    ]
+  },
+  "pageCursor": null
+}

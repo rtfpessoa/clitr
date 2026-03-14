@@ -1,0 +1,57 @@
+{
+  "timelineEvent": {
+    "id": "buy-order-001",
+    "timestamp": "2024-01-15T10:30:00.000+0100",
+    "icon": "https://assets.traderepublic.com/img/logos/US0378331005/light.min.svg",
+    "title": "Apple Inc.",
+    "body": "",
+    "status": "EXECUTED",
+    "eventType": "order_executed",
+    "subtitle": "Buy Order",
+    "amount": {
+      "value": -150.50,
+      "currency": "EUR",
+      "fractionDigits": 2
+    }
+  },
+  "details": {
+    "id": "buy-order-001",
+    "sections": [
+      {
+        "title": "Transaction",
+        "type": "table",
+        "data": [
+          {
+            "title": "Shares",
+            "detail": {
+              "text": "1.5",
+              "type": "text"
+            }
+          },
+          {
+            "title": "Share price",
+            "detail": {
+              "text": "100.00 EUR",
+              "type": "text"
+            }
+          },
+          {
+            "title": "Total",
+            "detail": {
+              "text": "150.00 EUR",
+              "type": "text"
+            }
+          },
+          {
+            "title": "Fee",
+            "detail": {
+              "text": "0.50 EUR",
+              "type": "text"
+            }
+          }
+        ]
+      }
+    ]
+  },
+  "pageCursor": "eyJrZXlzZXQiOiIyMDI0LTAxLTE1VDEwOjMwOjAwLjAwMFoifQ=="
+}

@@ -1,0 +1,56 @@
+{
+  "timelineEvent": {
+    "id": "saveback-001",
+    "timestamp": "2024-02-01T12:00:00.000Z",
+    "icon": "saveback",
+    "title": "Saveback",
+    "body": "",
+    "status": "EXECUTED",
+    "eventType": "card_order_billed",
+    "subtitle": "Card payment reward",
+    "amount": {
+      "value": 1.50,
+      "currency": "EUR",
+      "fractionDigits": 2
+    }
+  },
+  "details": {
+    "id": "saveback-001",
+    "sections": [
+      {
+        "title": "Saveback details",
+        "type": "table",
+        "action": {
+          "type": "instrumentDetail",
+          "payload": {
+            "instrumentId": "IE00B4L5Y983"
+          }
+        },
+        "data": [
+          {
+            "title": "Reward amount",
+            "detail": {
+              "text": "1.50 EUR",
+              "type": "text"
+            }
+          },
+          {
+            "title": "Invested in",
+            "detail": {
+              "text": "iShares Core MSCI World",
+              "type": "text"
+            }
+          },
+          {
+            "title": "Shares purchased",
+            "detail": {
+              "text": "0.018",
+              "type": "text"
+            }
+          }
+        ]
+      }
+    ]
+  },
+  "pageCursor": null
+}
