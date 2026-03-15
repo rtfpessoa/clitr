@@ -1,0 +1,50 @@
+{{define "title"}}2FA Verification - Trade Republic CSV Export{{end}}
+
+{{define "content"}}
+<h1>Two-Factor Authentication</h1>
+<div class="card">
+    {{if .Error}}
+    <div class="error-message">{{.Error}}</div>
+    {{end}}
+    <form method="POST" action="/twofa">
+        <input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
+        <div class="form-group">
+            <label for="code">Verification Code</label>
+            <input type="text" id="code" name="code"
+                   maxlength="4"
+                   inputmode="numeric"
+                   pattern="\d{4}"
+                   placeholder="4-digit code"
+                   required
+                   autocomplete="one-time-code">
+        </div>
+        <button type="submit" class="btn">Verify</button>
+    </form>
+    <p class="info-text" id="countdown">
+        {{if gt .Countdown 0}}
+        Check your Trade Republic app. Code expires in <span id="timer">{{.Countdown}}</span>s.
+        {{else}}
+        Check your Trade Republic app for the verification code.
+        {{end}}
+    </p>
+</div>
+{{if gt .Countdown 0}}
+<script nonce="{{.Nonce}}">
+(function() {
+    var remaining = {{.Countdown}};
+    var timerEl = document.getElementById('timer');
+    if (!timerEl) return;
+
+    var interval = setInterval(function() {
+        remaining--;
+        if (remaining <= 0) {
+            clearInterval(interval);
+            timerEl.parentElement.textContent = 'Code may have expired. Request a new one if needed.';
+        } else {
+            timerEl.textContent = remaining;
+        }
+    }, 1000);
+})();
+</script>
+{{end}}
+{{end}}

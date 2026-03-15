@@ -1,0 +1,32 @@
+{{define "title"}}Login - Trade Republic CSV Export{{end}}
+
+{{define "content"}}
+<h1>Trade Republic CSV Export</h1>
+<div class="card">
+    {{if .Error}}
+    <div class="error-message">{{.Error}}</div>
+    {{end}}
+    <form method="POST" action="/login">
+        <input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
+        <div class="form-group">
+            <label for="phone">Phone Number</label>
+            <input type="tel" id="phone" name="phone"
+                   placeholder="+49123456789"
+                   required
+                   autocomplete="tel">
+        </div>
+        <div class="form-group">
+            <label for="pin">PIN</label>
+            <input type="password" id="pin" name="pin"
+                   maxlength="4"
+                   inputmode="numeric"
+                   pattern="\d{4}"
+                   placeholder="4-digit PIN"
+                   required
+                   autocomplete="current-password">
+        </div>
+        <button type="submit" class="btn">Login</button>
+    </form>
+    <p class="info-text">Your credentials are processed in memory only and never stored to disk.</p>
+</div>
+{{end}}

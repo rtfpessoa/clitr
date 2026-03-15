@@ -1,0 +1,9 @@
+{{define "title"}}Error - Trade Republic CSV Export{{end}}
+
+{{define "content"}}
+<h1>Something Went Wrong</h1>
+<div class="card">
+    <div class="error-message">{{.Error}}</div>
+    <a href="/login" class="btn" style="display: block; text-align: center; text-decoration: none;">Try Again</a>
+</div>
+{{end}}

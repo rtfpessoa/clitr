@@ -1,0 +1,56 @@
+{{define "title"}}CSV Export - Trade Republic CSV Export{{end}}
+
+{{define "content"}}
+<h1>Transaction CSV</h1>
+<div class="card">
+    <div class="csv-preview" id="csv-data">{{.CSVData}}</div>
+    <button class="btn" id="copy-btn" type="button">Copy to Clipboard</button>
+    <p class="info-text">{{.EventCount}} transactions exported. Data exists in memory only.</p>
+</div>
+<script nonce="{{.Nonce}}">
+(function() {
+    var btn = document.getElementById('copy-btn');
+    var csvData = document.getElementById('csv-data');
+
+    btn.addEventListener('click', function() {
+        var text = csvData.textContent;
+
+        if (navigator.clipboard && navigator.clipboard.writeText) {
+            navigator.clipboard.writeText(text).then(function() {
+                btn.textContent = 'Copied!';
+                btn.classList.add('btn-success');
+                setTimeout(function() {
+                    btn.textContent = 'Copy to Clipboard';
+                    btn.classList.remove('btn-success');
+                }, 2000);
+            }).catch(function() {
+                fallbackCopy(text);
+            });
+        } else {
+            fallbackCopy(text);
+        }
+    });
+
+    function fallbackCopy(text) {
+        var textarea = document.createElement('textarea');
+        textarea.value = text;
+        textarea.style.position = 'fixed';
+        textarea.style.opacity = '0';
+        document.body.appendChild(textarea);
+        textarea.select();
+        try {
+            document.execCommand('copy');
+            btn.textContent = 'Copied!';
+            btn.classList.add('btn-success');
+            setTimeout(function() {
+                btn.textContent = 'Copy to Clipboard';
+                btn.classList.remove('btn-success');
+            }, 2000);
+        } catch (e) {
+            btn.textContent = 'Copy failed - select text manually';
+        }
+        document.body.removeChild(textarea);
+    }
+})();
+</script>
+{{end}}

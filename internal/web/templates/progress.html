@@ -1,0 +1,49 @@
+{{define "title"}}Fetching Transactions - Trade Republic CSV Export{{end}}
+
+{{define "content"}}
+<h1>Fetching Transactions</h1>
+<div class="card">
+    <p id="status-text">Connecting to Trade Republic...</p>
+    <div class="progress-bar-container">
+        <div class="progress-bar" id="progress-bar"></div>
+    </div>
+    <p class="info-text" id="event-count">Fetched 0 events so far</p>
+</div>
+<script nonce="{{.Nonce}}">
+(function() {
+    var statusEl = document.getElementById('status-text');
+    var barEl = document.getElementById('progress-bar');
+    var countEl = document.getElementById('event-count');
+
+    var source = new EventSource('/progress/events');
+
+    source.addEventListener('progress', function(e) {
+        var data = JSON.parse(e.data);
+        statusEl.textContent = 'Fetching page ' + data.page + '...';
+        countEl.textContent = 'Fetched ' + data.events + ' events so far';
+        if (data.events > 0) {
+            barEl.style.width = Math.min(90, data.page * 10) + '%';
+        }
+    });
+
+    source.addEventListener('done', function(e) {
+        source.close();
+        barEl.style.width = '100%';
+        statusEl.textContent = 'Done! Redirecting...';
+        window.location.href = '/result';
+    });
+
+    source.addEventListener('error_event', function(e) {
+        source.close();
+        statusEl.textContent = 'Error: ' + e.data;
+        statusEl.style.color = 'var(--error)';
+    });
+
+    source.onerror = function() {
+        source.close();
+        statusEl.textContent = 'Connection lost. Please try again.';
+        statusEl.style.color = 'var(--error)';
+    };
+})();
+</script>
+{{end}}
