@@ -66,6 +66,7 @@ func main() {
 		NewFetchCmd(config),
 		NewExportCmd(config),
 		NewPatchCmd(config),
+		NewServeCmd(config),
 	)
 
 	if err := rootCmd.Execute(); err != nil {
