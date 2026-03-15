@@ -17,6 +17,7 @@ A Go CLI tool to export transaction history from [Trade Republic](https://trader
 - **CSV Export**: Export transactions to a semicolon-delimited CSV file
 - **Transaction Types**: Supports Buy, Sell, Deposit, Removal, Interest, Dividend, Tax Refund, and Saveback transactions
 - **Struct Self-Healing**: Detects unknown API fields and auto-patches Go struct definitions
+- **Web UI**: Browser-based interface with login, real-time progress, and sortable table view
 - **Configurable**: Custom data directory and output paths
 
 ## Installation
@@ -44,6 +45,10 @@ clitr fetch --phone "+4912345678"
 
 # Step 2: Export to CSV
 clitr export
+
+# Or use the web UI instead
+clitr serve
+# Open http://localhost:8080 in your browser
 ```
 
 ## Usage
@@ -81,6 +86,35 @@ clitr fetch --phone "+4912345678" --reset-data
 | `--reset` | `-r` | Reset all: clear credentials and delete transaction data |
 | `--reset-credentials` | | Clear saved credentials from system keyring |
 | `--reset-data` | | Delete transaction data from disk |
+
+### Serve Command
+
+Starts a local web server with a browser-based UI for fetching and exporting transactions.
+
+```bash
+# Start web server on default port (8080)
+clitr serve
+
+# Use a custom port and host
+clitr serve --port 3000 --host 127.0.0.1
+
+# Trust X-Forwarded-For header (when behind a reverse proxy)
+clitr serve --trusted-proxy
+```
+
+The web UI provides:
+- **Login form** with phone number and PIN input
+- **2FA verification** with countdown timer
+- **Real-time progress** via Server-Sent Events (SSE)
+- **CSV result page** with toggle between raw CSV and sortable table view
+- **Copy to clipboard** for easy export
+
+**Flags:**
+| Flag | Short | Description | Default |
+|------|-------|-------------|---------|
+| `--port` | `-P` | Port to listen on | `8080` |
+| `--host` | | Host to bind to | `0.0.0.0` |
+| `--trusted-proxy` | | Trust X-Forwarded-For header | `false` |
 
 ### Export Command
 
@@ -143,6 +177,8 @@ clitr --data-dir /path/to/data fetch --phone "+4912345678"
 
 3. **Patch**: Scans the saved JSON files against the Go struct definitions, detects any new fields from API changes, infers their Go types, and optionally patches the source code automatically.
 
+4. **Serve**: Launches a local web server that provides a browser-based UI for the full fetch-and-export workflow, with real-time progress updates via SSE.
+
 This multi-step approach means you can:
 - Re-export with different options without re-fetching
 - Keep raw data for debugging or future format changes
@@ -179,6 +215,12 @@ The exported CSV uses semicolon (`;`) as delimiter and contains:
   - **Windows**: Windows Credential Manager
 - **No Password Storage**: Your PIN is never stored on disk
 - **Automatic Migration**: Existing plaintext cookie files are automatically migrated to the system keyring
+- **Web UI Hardening** (when using `serve`):
+  - Content Security Policy (CSP) with per-request nonce
+  - CSRF token protection on all POST requests
+  - Rate limiting (5 POST requests per IP per minute)
+  - Request body size limits (4 KB)
+  - Security headers: `X-Frame-Options: DENY`, `X-Content-Type-Options: nosniff`, `Referrer-Policy: no-referrer`
 
 ## Data Storage
 
@@ -217,13 +259,17 @@ clitr/
 ├── fetch.go                   # Fetch command
 ├── export.go                  # Export command
 ├── patch.go                   # Patch command (struct self-healing)
+├── serve.go                   # Serve command (web server)
 ├── internal/
 │   ├── client/                # Trade Republic API client
 │   │   ├── auth.go            # Authentication logic
 │   │   ├── client.go          # WebSocket client and subscriptions
 │   │   └── interfaces.go      # Interfaces for testing
 │   ├── export/                # Output formatters
-│   │   └── csv.go             # CSV exporter
+│   │   ├── csv.go             # CSV exporter
+│   │   └── parse.go           # Raw event parsing
+│   ├── fetch/                 # Fetch pipeline
+│   │   └── fetch.go           # Pagination and incremental fetching
 │   ├── json/                  # JSON utilities
 │   │   └── utils.go           # Strict JSON marshal/unmarshal
 │   ├── log/                   # Logging
@@ -236,8 +282,22 @@ clitr/
 │   ├── types/                 # Data models
 │   │   ├── event.go           # Event types and parsing
 │   │   └── raw.go             # Raw API response types
-│   └── utils/                 # Shared utilities
-│       └── file.go            # Path resolution
+│   ├── utils/                 # Shared utilities
+│   │   └── file.go            # Path resolution
+│   └── web/                   # Web server
+│       ├── server.go          # HTTP server, routes, middleware chain
+│       ├── handlers.go        # Request handlers (login, 2FA, progress, result)
+│       ├── middleware.go       # Security headers, body size limits
+│       ├── session.go         # In-memory session store with TTL
+│       ├── csrf.go            # CSRF token generation/validation
+│       ├── ratelimit.go       # Per-IP sliding window rate limiter
+│       └── templates/         # Embedded HTML templates
+│           ├── base.html      # Base layout with responsive CSS
+│           ├── login.html     # Phone + PIN login form
+│           ├── twofa.html     # 2FA verification
+│           ├── progress.html  # Real-time progress (SSE)
+│           ├── result.html    # CSV display with sortable table
+│           └── error.html     # Error page
 └── go.mod
 ```
 
