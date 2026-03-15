@@ -131,6 +131,37 @@ func TestTemplates_ResultRender(t *testing.T) {
 	assert.Contains(t, html, "clipboard")
 }
 
+func TestTemplates_ResultRender_TableViewToggle(t *testing.T) {
+	templates, err := ParseTemplates()
+	require.NoError(t, err)
+
+	var buf bytes.Buffer
+	err = templates.RenderResult(&buf, ResultData{
+		Nonce:      "toggle-nonce",
+		CSVData:    "Date;Type;Value\n2024-01-15;buy;100.00",
+		EventCount: 1,
+	})
+	require.NoError(t, err)
+
+	html := buf.String()
+	// Toggle buttons present
+	assert.Contains(t, html, `id="btn-raw"`)
+	assert.Contains(t, html, `id="btn-table"`)
+	assert.Contains(t, html, "Raw CSV")
+	assert.Contains(t, html, "Table View")
+	// Table container present (hidden by default)
+	assert.Contains(t, html, `id="table-view"`)
+	assert.Contains(t, html, `id="csv-table"`)
+	// Raw CSV view still present
+	assert.Contains(t, html, `id="csv-data"`)
+	// Nonce on both style and script
+	assert.Contains(t, html, `nonce="toggle-nonce"`)
+	// Sort indicator logic present in JS
+	assert.Contains(t, html, "sort-indicator")
+	assert.Contains(t, html, "parseCSV")
+	assert.Contains(t, html, "buildTable")
+}
+
 func TestTemplates_ErrorRender(t *testing.T) {
 	templates, err := ParseTemplates()
 	require.NoError(t, err)

@@ -3,20 +3,218 @@
 {{define "content"}}
 <h1>Transaction CSV</h1>
 <div class="card">
-    <div class="csv-preview" id="csv-data">{{.CSVData}}</div>
+    <div class="view-toggle" id="view-toggle">
+        <button class="toggle-btn" id="btn-raw" type="button">Raw CSV</button>
+        <button class="toggle-btn active" id="btn-table" type="button">Table View</button>
+    </div>
+    <div class="csv-preview hidden" id="csv-data">{{.CSVData}}</div>
+    <div class="table-container" id="table-view">
+        <table class="csv-table" id="csv-table"></table>
+    </div>
     <button class="btn" id="copy-btn" type="button">Copy to Clipboard</button>
     <p class="info-text">{{.EventCount}} transactions exported. Data exists in memory only.</p>
 </div>
+<style nonce="{{.Nonce}}">
+    .hidden {
+        display: none !important;
+    }
+    .view-toggle {
+        display: flex;
+        gap: 0;
+        margin-bottom: 1rem;
+        border: 1px solid var(--border);
+        border-radius: var(--radius);
+        overflow: hidden;
+    }
+    .toggle-btn {
+        flex: 1;
+        padding: 0.5rem 1rem;
+        font-size: 0.875rem;
+        font-weight: 600;
+        border: none;
+        background: var(--bg);
+        color: var(--text-secondary);
+        cursor: pointer;
+        min-height: 40px;
+        transition: background 0.15s, color 0.15s;
+    }
+    .toggle-btn.active {
+        background: var(--primary);
+        color: #ffffff;
+    }
+    .table-container {
+        overflow-x: auto;
+        max-height: 400px;
+        overflow-y: auto;
+        margin-bottom: 1rem;
+        border: 1px solid var(--border);
+        border-radius: var(--radius);
+    }
+    .csv-table {
+        width: 100%;
+        border-collapse: collapse;
+        font-size: 0.8125rem;
+        line-height: 1.4;
+        white-space: nowrap;
+    }
+    .csv-table th,
+    .csv-table td {
+        padding: 0.5rem 0.75rem;
+        text-align: left;
+        border-bottom: 1px solid var(--border);
+    }
+    .csv-table th {
+        background: var(--bg-card);
+        font-weight: 600;
+        cursor: pointer;
+        user-select: none;
+        position: sticky;
+        top: 0;
+        z-index: 1;
+    }
+    .csv-table th:hover {
+        background: var(--border);
+    }
+    .csv-table th .sort-indicator {
+        margin-left: 0.25rem;
+        opacity: 0.4;
+    }
+    .csv-table th .sort-indicator.active {
+        opacity: 1;
+    }
+    .csv-table tr:hover td {
+        background: color-mix(in srgb, var(--primary) 5%, transparent);
+    }
+    .csv-table td {
+        background: var(--bg);
+    }
+</style>
 <script nonce="{{.Nonce}}">
 (function() {
     var btn = document.getElementById('copy-btn');
-    var csvData = document.getElementById('csv-data');
+    var csvEl = document.getElementById('csv-data');
+    var tableView = document.getElementById('table-view');
+    var tableEl = document.getElementById('csv-table');
+    var btnRaw = document.getElementById('btn-raw');
+    var btnTable = document.getElementById('btn-table');
 
+    var rawCSV = csvEl.textContent;
+    var sortCol = -1;
+    var sortAsc = true;
+
+    // Parse CSV into rows of cells (semicolon-delimited)
+    function parseCSV(text) {
+        var lines = text.trim().split('\n');
+        var result = [];
+        for (var i = 0; i < lines.length; i++) {
+            var line = lines[i].trim();
+            if (line.length > 0) {
+                result.push(line.split(';'));
+            }
+        }
+        return result;
+    }
+
+    // Build table from parsed CSV data
+    function buildTable(rows, sortColumn, ascending) {
+        if (rows.length === 0) return;
+
+        var header = rows[0];
+        var data = rows.slice(1);
+
+        // Sort data if a column is selected
+        if (sortColumn >= 0 && sortColumn < header.length) {
+            data = data.slice().sort(function(a, b) {
+                var valA = (a[sortColumn] || '').trim();
+                var valB = (b[sortColumn] || '').trim();
+
+                // Try numeric comparison
+                var numA = parseFloat(valA);
+                var numB = parseFloat(valB);
+                if (!isNaN(numA) && !isNaN(numB)) {
+                    return ascending ? numA - numB : numB - numA;
+                }
+
+                // Fall back to string comparison
+                var cmp = valA.localeCompare(valB);
+                return ascending ? cmp : -cmp;
+            });
+        }
+
+        var html = '<thead><tr>';
+        for (var i = 0; i < header.length; i++) {
+            var indicator = '';
+            if (i === sortColumn) {
+                indicator = '<span class="sort-indicator active">' + (ascending ? '\u25B2' : '\u25BC') + '</span>';
+            } else {
+                indicator = '<span class="sort-indicator">\u25B2</span>';
+            }
+            html += '<th data-col="' + i + '">' + escapeHTML(header[i].trim()) + indicator + '</th>';
+        }
+        html += '</tr></thead><tbody>';
+
+        for (var r = 0; r < data.length; r++) {
+            html += '<tr>';
+            for (var c = 0; c < header.length; c++) {
+                var cell = data[r][c] || '';
+                html += '<td>' + escapeHTML(cell.trim()) + '</td>';
+            }
+            html += '</tr>';
+        }
+        html += '</tbody>';
+
+        tableEl.innerHTML = html;
+
+        // Attach sort handlers to headers
+        var ths = tableEl.querySelectorAll('th');
+        for (var j = 0; j < ths.length; j++) {
+            ths[j].addEventListener('click', handleHeaderClick);
+        }
+    }
+
+    function escapeHTML(str) {
+        var div = document.createElement('div');
+        div.appendChild(document.createTextNode(str));
+        return div.innerHTML;
+    }
+
+    function handleHeaderClick(e) {
+        var th = e.currentTarget;
+        var col = parseInt(th.getAttribute('data-col'), 10);
+        if (col === sortCol) {
+            sortAsc = !sortAsc;
+        } else {
+            sortCol = col;
+            sortAsc = true;
+        }
+        buildTable(parseCSV(rawCSV), sortCol, sortAsc);
+    }
+
+    // Initialize table on load
+    var parsedRows = parseCSV(rawCSV);
+    if (parsedRows.length > 1) {
+        buildTable(parsedRows, -1, true);
+    }
+
+    // Toggle handlers
+    btnRaw.addEventListener('click', function() {
+        csvEl.classList.remove('hidden');
+        tableView.classList.add('hidden');
+        btnRaw.classList.add('active');
+        btnTable.classList.remove('active');
+    });
+
+    btnTable.addEventListener('click', function() {
+        csvEl.classList.add('hidden');
+        tableView.classList.remove('hidden');
+        btnTable.classList.add('active');
+        btnRaw.classList.remove('active');
+    });
+
+    // Copy always copies raw CSV
     btn.addEventListener('click', function() {
-        var text = csvData.textContent;
-
         if (navigator.clipboard && navigator.clipboard.writeText) {
-            navigator.clipboard.writeText(text).then(function() {
+            navigator.clipboard.writeText(rawCSV).then(function() {
                 btn.textContent = 'Copied!';
                 btn.classList.add('btn-success');
                 setTimeout(function() {
@@ -24,10 +222,10 @@
                     btn.classList.remove('btn-success');
                 }, 2000);
             }).catch(function() {
-                fallbackCopy(text);
+                fallbackCopy(rawCSV);
             });
         } else {
-            fallbackCopy(text);
+            fallbackCopy(rawCSV);
         }
     });
 
