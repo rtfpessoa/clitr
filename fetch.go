@@ -2,7 +2,7 @@ package main
 
 import (
 	"context"
-	"encoding/base64"
+	stdjson "encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/rtfpessoa/clitr/internal/client"
+	"github.com/rtfpessoa/clitr/internal/fetch"
 	"github.com/rtfpessoa/clitr/internal/json"
 	"github.com/rtfpessoa/clitr/internal/log"
 	"github.com/rtfpessoa/clitr/internal/types"
@@ -159,7 +160,7 @@ func fetchEvents(ctx context.Context, trclient *client.Client, eventsDir string,
 	log.Info("Fetching transaction history")
 
 	var cursor *string
-	direction := FetchDirectionAfter
+	direction := fetch.DirectionAfter
 
 	if incremental {
 		meta, err := loadMetadata(eventsDir)
@@ -187,7 +188,7 @@ func fetchEvents(ctx context.Context, trclient *client.Client, eventsDir string,
 				cursor = meta.LatestPageCursor
 			}
 
-			direction = FetchDirectionBefore
+			direction = fetch.DirectionBefore
 			log.Info("Processing incremental fetch", zap.Any("fromItem", cursor))
 		}
 	}
@@ -197,6 +198,49 @@ func fetchEvents(ctx context.Context, trclient *client.Client, eventsDir string,
 		return nil, fmt.Errorf("failed to fetch events: %w", err)
 	}
 	log.Info("Retrieved transactions", zap.Int("count", len(rawEvents)))
+
+	return rawEvents, nil
+}
+
+// fetchRawEvents delegates to fetch.FetchAllEvents and converts the typed results
+// back to rawEventFile for disk serialization.
+func fetchRawEvents(ctx context.Context, trclient *client.Client, direction fetch.Direction, cursor *string) ([]*rawEventFile, error) {
+	typedEvents, err := fetch.FetchAllEvents(ctx, trclient, direction, cursor, func(page int, eventsSoFar int) {
+		log.Info("Fetched page", zap.Int("page", page), zap.Int("eventsSoFar", eventsSoFar))
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	return convertToRawEventFiles(typedEvents, cursor)
+}
+
+// convertToRawEventFiles converts typed RawEvent objects to untyped rawEventFile
+// objects for disk persistence. Uses stdlib JSON to preserve field compatibility.
+func convertToRawEventFiles(typedEvents []*types.RawEvent, fallbackCursor *string) ([]*rawEventFile, error) {
+	rawEvents := make([]*rawEventFile, 0, len(typedEvents))
+
+	for _, typed := range typedEvents {
+		// Round-trip through stdlib JSON to convert typed struct to interface{} maps.
+		// This ensures disk files have the same format as before.
+		jsonBytes, err := stdjson.Marshal(typed)
+		if err != nil {
+			return nil, fmt.Errorf("failed to marshal typed event: %w", err)
+		}
+
+		var raw rawEventFile
+		if err := stdjson.Unmarshal(jsonBytes, &raw); err != nil {
+			return nil, fmt.Errorf("failed to unmarshal to raw event file: %w", err)
+		}
+
+		// Preserve the page cursor for incremental fetch metadata.
+		// The typed RawEvent carries its own PageCursor; if nil, use the fallback.
+		if raw.PageCursor == nil {
+			raw.PageCursor = fallbackCursor
+		}
+
+		rawEvents = append(rawEvents, &raw)
+	}
 
 	return rawEvents, nil
 }
@@ -337,288 +381,4 @@ func loadMetadata(dataDir string) (*metadata, error) {
 	}
 
 	return &meta, nil
-}
-
-type FetchDirection string
-
-const (
-	// Oldest events
-	FetchDirectionAfter FetchDirection = "after"
-	// Newest events
-	FetchDirectionBefore FetchDirection = "before"
-)
-
-func fetchRawEvents(ctx context.Context, trclient *client.Client, fetchDirection FetchDirection, cursor *string) ([]*rawEventFile, error) {
-	var allRawEvents []*rawEventFile
-
-	for {
-		rawItems, nextPageCursor, err := fetchTimelinePage(ctx, trclient, cursor)
-		if err != nil {
-			return nil, err
-		}
-
-		details, err := fetchDetailsForItems(ctx, trclient, rawItems)
-		if err != nil {
-			return nil, err
-		}
-
-		var eventCursor *string
-		if nextPageCursor.After != nil {
-			eventCursor, err = changeCursor(nextPageCursor.After, FetchDirectionBefore)
-			if err != nil {
-				return nil, fmt.Errorf("failed to change cursor direction: %w", err)
-			}
-		} else {
-			eventCursor = cursor
-		}
-
-		rawEvents := assembleRawEvents(rawItems, details, eventCursor)
-		allRawEvents = append(allRawEvents, rawEvents...)
-
-		var nextCursor *string
-		switch fetchDirection {
-		case FetchDirectionAfter:
-			nextCursor = nextPageCursor.After
-		case FetchDirectionBefore:
-			nextCursor = nextPageCursor.Before
-		}
-
-		if nextCursor == nil || len(rawItems) == 0 {
-			break
-		}
-
-		cursor = nextCursor
-		log.Info("Fetching next page", zap.Int("totalSoFar", len(allRawEvents)), zap.Stringp("nextCursor", nextCursor))
-	}
-
-	return allRawEvents, nil
-}
-
-func fetchTimelinePage(ctx context.Context, trclient *client.Client, after *string) ([]map[string]interface{}, *pageCursor, error) {
-	subID, err := trclient.TimelineTransactions(ctx, after)
-	if err != nil {
-		return nil, nil, fmt.Errorf("failed to subscribe to timeline transactions: %w", err)
-	}
-
-	for {
-		select {
-		case msg := <-trclient.Recv():
-			if msg.Error != nil {
-				return nil, nil, msg.Error
-			}
-
-			if msg.SubscriptionID == subID {
-				rawItems, cursor, err := parseTimelineMessage(msg)
-				if err != nil {
-					return nil, nil, err
-				}
-
-				err = trclient.Unsubscribe(ctx, subID)
-				if err != nil {
-					return nil, nil, err
-				}
-
-				return rawItems, cursor, nil
-			}
-
-			log.Warn("Received message for unknown subscription", zap.Any("msg", msg))
-
-		case <-ctx.Done():
-			return nil, nil, ctx.Err()
-		case <-time.After(30 * time.Second):
-			return nil, nil, fmt.Errorf("timeout waiting for timeline response")
-		}
-	}
-}
-
-type pageCursor struct {
-	Before *string `json:"before"`
-	After  *string `json:"after"`
-}
-
-func parseTimelineMessage(msg client.Message) ([]map[string]interface{}, *pageCursor, error) {
-	log.Debug("Received timeline message",
-		zap.String("subscriptionID", msg.SubscriptionID),
-		zap.Strings("payloadKeys", getKeys(msg.Payload)))
-
-	var rawItems []map[string]interface{}
-	cursor := &pageCursor{}
-
-	if items, ok := msg.Payload["items"].([]interface{}); ok {
-		log.Debug("Found timeline items", zap.Int("count", len(items)))
-		for i, item := range items {
-			itemMap, ok := item.(map[string]interface{})
-			if !ok {
-				log.Warn("Timeline item is not a map", zap.Int("index", i))
-				continue
-			}
-
-			if i == 0 {
-				log.Debug("First timeline item", zap.Strings("keys", getKeys(itemMap)))
-				if action, ok := itemMap["action"].(map[string]interface{}); ok {
-					log.Debug("First item action", zap.Any("action", action))
-				}
-			}
-
-			rawItems = append(rawItems, itemMap)
-		}
-	} else {
-		log.Warn("No 'items' field in payload")
-	}
-
-	if cursors, ok := msg.Payload["cursors"].(map[string]interface{}); ok {
-		if afterVal, ok := cursors["after"].(string); ok && afterVal != "" {
-			cursor.After = &afterVal
-			log.Debug("Next page cursor", zap.String("cursor", *cursor.After))
-		}
-
-		if beforeVal, ok := cursors["before"].(string); ok && beforeVal != "" {
-			cursor.Before = &beforeVal
-			log.Debug("Previous page cursor", zap.String("cursor", *cursor.Before))
-		}
-	} else {
-		log.Debug("No cursors in response")
-	}
-
-	return rawItems, cursor, nil
-}
-
-func fetchDetailsForItems(ctx context.Context, trclient *client.Client, rawItems []map[string]interface{}) (map[string]map[string]interface{}, error) {
-	detailSubIDs := make(map[string]string, len(rawItems))
-	for _, item := range rawItems {
-		id, _ := item["id"].(string)
-		if id == "" {
-			continue
-		}
-		detailSubID, err := trclient.TimelineDetailV2(ctx, id)
-		if err != nil {
-			log.Warn("Failed to get timeline detail", zap.String("eventID", id), zap.Error(err))
-			continue
-		}
-		detailSubIDs[detailSubID] = id
-	}
-
-	totalDetails := len(detailSubIDs)
-	if totalDetails == 0 {
-		return nil, nil
-	}
-
-	details := make(map[string]map[string]interface{}, totalDetails)
-	detailsReceived := 0
-
-	timeoutDuration := 30 * time.Second
-	timer := time.NewTimer(timeoutDuration)
-	defer timer.Stop()
-
-detailLoop:
-	for detailsReceived < totalDetails {
-		select {
-		case msg, ok := <-trclient.Recv():
-			if !ok {
-				break detailLoop
-			}
-
-			if timelineEventID, ok := detailSubIDs[msg.SubscriptionID]; ok {
-				detailsReceived++
-				timer.Reset(timeoutDuration)
-
-				if msg.Error != nil {
-					log.Warn("Detail fetch error",
-						zap.String("eventID", timelineEventID),
-						zap.Error(msg.Error))
-					continue
-				}
-
-				if detailsReceived == 1 {
-					log.Debug("First detail received",
-						zap.Strings("keys", getKeys(msg.Payload)))
-				}
-
-				details[timelineEventID] = msg.Payload
-
-				err := trclient.Unsubscribe(ctx, msg.SubscriptionID)
-				if err != nil {
-					return nil, err
-				}
-			}
-		case <-ctx.Done():
-			log.Warn("Context cancelled while waiting for details",
-				zap.Int("received", detailsReceived),
-				zap.Int("total", totalDetails))
-			break detailLoop
-		case <-timer.C:
-			log.Warn("Timeout waiting for details",
-				zap.Int("received", detailsReceived),
-				zap.Int("total", totalDetails))
-			break detailLoop
-		}
-	}
-
-	log.Debug("Collected details",
-		zap.Int("collected", len(details)),
-		zap.Int("requested", totalDetails))
-
-	return details, nil
-}
-
-func assembleRawEvents(rawItems []map[string]interface{}, details map[string]map[string]interface{}, pageCursor *string) []*rawEventFile {
-	rawEvents := make([]*rawEventFile, 0, len(rawItems))
-	for _, item := range rawItems {
-		id, _ := item["id"].(string)
-		rawEvent := &rawEventFile{
-			TimelineEvent: item,
-			Details:       details[id],
-			PageCursor:    pageCursor,
-		}
-		rawEvents = append(rawEvents, rawEvent)
-	}
-	return rawEvents
-}
-
-// getKeys extracts all keys from a map for debugging output
-func getKeys(m map[string]interface{}) []string {
-	keys := make([]string, 0, len(m))
-	for k := range m {
-		keys = append(keys, k)
-	}
-
-	return keys
-}
-
-type cursor struct {
-	Keyset struct {
-		EventId   string    `json:"eventId"`
-		Timestamp time.Time `json:"timestamp"`
-	} `json:"keyset"`
-	PageDirection FetchDirection `json:"pageDirection"`
-}
-
-func changeCursor(cursorStr *string, direction FetchDirection) (*string, error) {
-	if cursorStr == nil {
-		if direction == FetchDirectionBefore {
-			return nil, fmt.Errorf("cannot change direction to before from empty cursor")
-		}
-		return nil, nil
-	}
-
-	bytes, err := base64.RawStdEncoding.DecodeString(*cursorStr)
-	if err != nil {
-		return nil, fmt.Errorf("failed to decode cursor: %w", err)
-	}
-
-	parsed := &cursor{}
-	err = json.Unmarshal(bytes, parsed)
-	if err != nil {
-		return nil, fmt.Errorf("failed to unmarshal cursor: %w", err)
-	}
-
-	parsed.PageDirection = direction
-	cursorBytes, err := json.Marshal(parsed)
-	if err != nil {
-		return nil, fmt.Errorf("failed to marshal cursor: %w", err)
-	}
-
-	newCursor := base64.RawStdEncoding.EncodeToString(cursorBytes)
-
-	return &newCursor, nil
 }

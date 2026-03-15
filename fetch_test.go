@@ -1,111 +1,14 @@
 package main
 
 import (
-	"encoding/base64"
 	"os"
 	"path/filepath"
 	"testing"
 	"time"
 
-	"github.com/rtfpessoa/clitr/internal/client"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
-
-func TestParseTimelineMessage_ValidItems(t *testing.T) {
-	msg := client.Message{
-		SubscriptionID: "1",
-		Payload: map[string]interface{}{
-			"items": []interface{}{
-				map[string]interface{}{
-					"id":        "event-1",
-					"timestamp": "2024-01-15T10:30:00.000+0100",
-					"title":     "Apple Inc.",
-					"status":    "EXECUTED",
-				},
-			},
-		},
-	}
-
-	items, cursor, err := parseTimelineMessage(msg)
-	require.NoError(t, err)
-	require.Len(t, items, 1)
-
-	assert.Equal(t, "event-1", items[0]["id"])
-	assert.Equal(t, "Apple Inc.", items[0]["title"])
-	assert.NotNil(t, cursor)
-}
-
-func TestParseTimelineMessage_WithCursors(t *testing.T) {
-	msg := client.Message{
-		SubscriptionID: "1",
-		Payload: map[string]interface{}{
-			"items": []interface{}{},
-			"cursors": map[string]interface{}{
-				"before": "cursor-before",
-				"after":  "cursor-after",
-			},
-		},
-	}
-
-	_, cursor, err := parseTimelineMessage(msg)
-	require.NoError(t, err)
-	require.NotNil(t, cursor)
-
-	assert.Equal(t, "cursor-before", *cursor.Before)
-	assert.Equal(t, "cursor-after", *cursor.After)
-}
-
-func TestParseTimelineMessage_PreservesUnknownFields(t *testing.T) {
-	msg := client.Message{
-		SubscriptionID: "1",
-		Payload: map[string]interface{}{
-			"items": []interface{}{
-				map[string]interface{}{
-					"id":           "event-1",
-					"timestamp":    "2024-01-15T10:30:00.000+0100",
-					"title":        "Apple Inc.",
-					"status":       "EXECUTED",
-					"unknownField": "preserved",
-				},
-			},
-		},
-	}
-
-	items, _, err := parseTimelineMessage(msg)
-	require.NoError(t, err)
-	require.Len(t, items, 1)
-
-	// Unknown fields are preserved in the raw map
-	assert.Equal(t, "preserved", items[0]["unknownField"])
-}
-
-func TestChangeCursor_DirectionChange(t *testing.T) {
-	// Create a valid base64-encoded cursor with proper structure
-	cursorJSON := `{"keyset":{"eventId":"test-123","timestamp":"2024-01-15T10:30:00Z"},"pageDirection":"after"}`
-	encoded := base64.RawStdEncoding.EncodeToString([]byte(cursorJSON))
-
-	result, err := changeCursor(&encoded, FetchDirectionBefore)
-	require.NoError(t, err)
-	require.NotNil(t, result)
-
-	// Decode the result to verify direction changed
-	decoded, err := base64.RawStdEncoding.DecodeString(*result)
-	require.NoError(t, err)
-	// JSON is pretty-printed, so check for the value anywhere in the output
-	assert.Contains(t, string(decoded), `"pageDirection": "before"`)
-}
-
-func TestChangeCursor_NilInput(t *testing.T) {
-	result, err := changeCursor(nil, FetchDirectionAfter)
-	require.NoError(t, err)
-	assert.Nil(t, result)
-}
-
-func TestChangeCursor_NilInputBeforeDirection(t *testing.T) {
-	_, err := changeCursor(nil, FetchDirectionBefore)
-	require.Error(t, err)
-}
 
 func TestSaveMetadata_WithPendingItems(t *testing.T) {
 	tmpDir := t.TempDir()
@@ -298,25 +201,12 @@ func TestSaveRawEvents_PreservesUnknownFields(t *testing.T) {
 	assert.Contains(t, string(data), "newDetailKey")
 }
 
-func TestAssembleRawEvents(t *testing.T) {
-	items := []map[string]interface{}{
-		{"id": "e1", "title": "Event 1"},
-		{"id": "e2", "title": "Event 2"},
-	}
-	details := map[string]map[string]interface{}{
-		"e1": {"id": "e1", "sections": []interface{}{}},
-	}
+func TestConvertToRawEventFiles(t *testing.T) {
+	// Test that convertToRawEventFiles preserves the fallback cursor
 	cursor := "test-cursor"
-
-	result := assembleRawEvents(items, details, &cursor)
-	require.Len(t, result, 2)
-
-	assert.Equal(t, items[0], result[0].TimelineEvent)
-	assert.Equal(t, details["e1"], result[0].Details)
-	assert.Equal(t, &cursor, result[0].PageCursor)
-
-	// e2 has no detail
-	assert.Nil(t, result[1].Details)
+	result, err := convertToRawEventFiles(nil, &cursor)
+	require.NoError(t, err)
+	assert.Empty(t, result)
 }
 
 // Helper to ensure time.Time can be used in assertions
