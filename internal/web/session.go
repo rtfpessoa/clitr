@@ -6,6 +6,7 @@ package web
 import (
 	"crypto/rand"
 	"encoding/hex"
+	"io"
 	"sync"
 	"time"
 
@@ -31,6 +32,8 @@ type Session struct {
 	State        SessionState
 	Countdown    int
 	CSVData      string
+	EventCount   int
+	Client       io.Closer // TR client; closed on session delete
 	CreatedAt    time.Time
 	LastActivity time.Time
 	ExpiresAt    time.Time
@@ -89,14 +92,20 @@ func (s *SessionStore) Get(id string) *Session {
 	return session
 }
 
-// Delete removes a session and zeros its sensitive data.
+// Delete removes a session, closes its client, and zeros its sensitive data.
 func (s *SessionStore) Delete(id string) {
 	s.mu.Lock()
 	session, ok := s.sessions[id]
 	if ok {
+		// Close the TR client if present
+		if session.Client != nil {
+			_ = session.Client.Close()
+			session.Client = nil
+		}
 		// Zero sensitive data before removing reference
 		session.CSVData = ""
 		session.CSRFToken = ""
+		session.EventCount = 0
 		delete(s.sessions, id)
 	}
 	s.mu.Unlock()
@@ -133,14 +142,18 @@ func (s *SessionStore) Rotate(oldID string) *Session {
 		State:        old.State,
 		Countdown:    old.Countdown,
 		CSVData:      old.CSVData,
+		EventCount:   old.EventCount,
+		Client:       old.Client, // Transfer client to new session
 		CreatedAt:    now,
 		LastActivity: now,
 		ExpiresAt:    now.Add(s.ttl),
 	}
 
-	// Zero and delete old session
+	// Zero old session (don't close client — it moved to newSession)
+	old.Client = nil
 	old.CSVData = ""
 	old.CSRFToken = ""
+	old.EventCount = 0
 	delete(s.sessions, oldID)
 
 	// Store new session
@@ -158,8 +171,13 @@ func (s *SessionStore) Cleanup() int {
 	s.mu.Lock()
 	for id, session := range s.sessions {
 		if now.After(session.ExpiresAt) {
+			if session.Client != nil {
+				_ = session.Client.Close()
+				session.Client = nil
+			}
 			session.CSVData = ""
 			session.CSRFToken = ""
+			session.EventCount = 0
 			delete(s.sessions, id)
 			removed++
 		}
