@@ -439,6 +439,10 @@ func TestValidatePhone(t *testing.T) {
 		{"+1234567890123456", false}, // Too long
 		{"+49abc", false},         // Letters
 		{"+49 123 456", false},    // Spaces
+		{"' OR 1=1 --", false},    // SQL injection
+		{"<script>alert(1)</script>", false}, // XSS attempt
+		{"+49123456789\n", false}, // Newline injection
+		{"+49123456789\x00", false}, // Null byte
 	}
 
 	for _, tc := range tests {
@@ -460,6 +464,9 @@ func TestValidatePIN(t *testing.T) {
 		{"12345", false}, // Too long
 		{"abcd", false},  // Letters
 		{"12 4", false},  // Space
+		{"1234; DROP TABLE users;--", false}, // SQL injection
+		{"<script>", false},                  // XSS attempt
+		{"12\n4", false},                     // Newline injection
 	}
 
 	for _, tc := range tests {
@@ -480,6 +487,8 @@ func TestValidateCode(t *testing.T) {
 		{"123", false},
 		{"12345", false},
 		{"abcd", false},
+		{"12;DROP", false}, // SQL injection
+		{"<img>", false},   // XSS attempt
 	}
 
 	for _, tc := range tests {

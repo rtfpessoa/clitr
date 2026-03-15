@@ -199,6 +199,63 @@ func TestRateLimitMiddleware_SkipsGET(t *testing.T) {
 	assert.Equal(t, 5, called)
 }
 
+func TestBodySizeLimit_AllowsSmallPOST(t *testing.T) {
+	called := false
+	handler := BodySizeLimit(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		called = true
+		// Read the body to verify it's accessible
+		buf := make([]byte, 1024)
+		n, _ := r.Body.Read(buf)
+		assert.Greater(t, n, 0)
+		w.WriteHeader(http.StatusOK)
+	}))
+
+	body := strings.NewReader("csrf_token=abc&phone=+49123456789&pin=1234")
+	req := httptest.NewRequest("POST", "/login", body)
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	rec := httptest.NewRecorder()
+
+	handler.ServeHTTP(rec, req)
+	assert.True(t, called)
+	assert.Equal(t, http.StatusOK, rec.Code)
+}
+
+func TestBodySizeLimit_RejectsOversizedPOST(t *testing.T) {
+	handler := BodySizeLimit(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// Attempt to parse form — this triggers the MaxBytesReader check
+		err := r.ParseForm()
+		if err != nil {
+			http.Error(w, "Request too large", http.StatusRequestEntityTooLarge)
+			return
+		}
+		w.WriteHeader(http.StatusOK)
+	}))
+
+	// Create a body larger than maxBodyBytes (4096)
+	largeBody := strings.Repeat("x", 5000)
+	req := httptest.NewRequest("POST", "/login", strings.NewReader(largeBody))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	rec := httptest.NewRecorder()
+
+	handler.ServeHTTP(rec, req)
+	assert.Equal(t, http.StatusRequestEntityTooLarge, rec.Code)
+}
+
+func TestBodySizeLimit_SkipsGET(t *testing.T) {
+	called := false
+	handler := BodySizeLimit(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		called = true
+		w.WriteHeader(http.StatusOK)
+	}))
+
+	req := httptest.NewRequest("GET", "/login", nil)
+	rec := httptest.NewRecorder()
+
+	handler.ServeHTTP(rec, req)
+	assert.True(t, called)
+	assert.Equal(t, http.StatusOK, rec.Code)
+}
+
 func TestRequestLogging_SetsRequestID(t *testing.T) {
 	handler := RequestLogging(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		// Verify request ID is set in response header

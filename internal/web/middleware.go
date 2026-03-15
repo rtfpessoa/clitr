@@ -115,6 +115,20 @@ func RateLimitMiddleware(limiter *RateLimiter, trustProxy bool) func(http.Handle
 	}
 }
 
+// MaxBodySize limits the size of POST request bodies to prevent memory exhaustion.
+// Form submissions for login/2FA should be tiny (< 1KB).
+const maxBodyBytes = 4096
+
+// BodySizeLimit wraps POST request bodies with a size limiter.
+func BodySizeLimit(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodPost && r.Body != nil {
+			r.Body = http.MaxBytesReader(w, r.Body, maxBodyBytes)
+		}
+		next.ServeHTTP(w, r)
+	})
+}
+
 // RequestLogging adds a unique request ID and logs each request.
 func RequestLogging(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

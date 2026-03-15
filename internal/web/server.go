@@ -78,10 +78,11 @@ func NewServer(cfg ServerConfig, factory ClientFactory) (*Server, error) {
 	// Result route
 	mux.HandleFunc("GET /result", handlers.HandleResult)
 
-	// Apply middleware chain: logging → security headers → rate limit → CSRF → mux
+	// Apply middleware chain: logging → security headers → body size limit → rate limit → CSRF → mux
 	var handler http.Handler = mux
 	handler = CSRFMiddleware(store)(handler)
 	handler = RateLimitMiddleware(limiter, cfg.TrustProxy)(handler)
+	handler = BodySizeLimit(handler)
 	handler = SecurityHeaders(handler)
 	handler = RequestLogging(handler)
 
