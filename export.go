@@ -93,22 +93,10 @@ func loadRawEventsFromDirectory(dir string) ([]*types.RawEvent, error) {
 	return rawEvents, nil
 }
 
+// parseRawEvents delegates to export.ParseRawEvents.
+// Kept as a local wrapper for backward compatibility with existing callers in package main.
 func parseRawEvents(rawEvents []*types.RawEvent) ([]*types.Event, error) {
-	log.Info("Parsing transactions")
-	events := make([]*types.Event, 0, len(rawEvents))
-
-	for _, rawEvent := range rawEvents {
-		event, err := types.ParseEvent(rawEvent.TimelineEvent, rawEvent.Details)
-		if err != nil {
-			return nil, fmt.Errorf("failed to parse event: %w", err)
-		}
-		if event != nil {
-			events = append(events, event)
-		}
-	}
-
-	log.Info("Parsed transactions", zap.Int("count", len(events)))
-	return events, nil
+	return export.ParseRawEvents(rawEvents)
 }
 
 func exportToCSV(events []*types.Event, outputFile string, sortByDate bool) error {
