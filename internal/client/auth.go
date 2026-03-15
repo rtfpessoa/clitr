@@ -43,16 +43,24 @@ func (c *Client) collectPin(phoneNumber string) (*string, error) {
 	return &pin, nil
 }
 
-// InitiateWebLogin starts the web login process
+// initiateWebLogin starts the web login process using stdin for PIN input.
+// Used by the CLI flow via AuthenticateClient.
 func (c *Client) initiateWebLogin(phoneNo string) (int, error) {
 	pin, err := c.collectPin(phoneNo)
 	if err != nil {
 		return 0, err
 	}
 
+	return c.InitiateWebLoginWithCredentials(phoneNo, *pin)
+}
+
+// InitiateWebLoginWithCredentials starts the web login process with phone and PIN provided directly.
+// Returns the countdown in seconds for the 2FA code.
+// Used by the web server flow where credentials arrive via POST form.
+func (c *Client) InitiateWebLoginWithCredentials(phoneNo, pin string) (int, error) {
 	payload := map[string]string{
 		"phoneNumber": phoneNo,
-		"pin":         *pin,
+		"pin":         pin,
 	}
 
 	body, err := json.Marshal(payload)
@@ -110,8 +118,14 @@ func (c *Client) initiateWebLogin(phoneNo string) (int, error) {
 	return result.CountdownInSeconds + 1, nil
 }
 
-// CompleteWebLogin completes the web login with 2FA code
+// completeWebLogin is the unexported wrapper used by AuthenticateClient.
 func (c *Client) completeWebLogin(code string) error {
+	return c.CompleteWebLogin(code)
+}
+
+// CompleteWebLogin completes the web login with 2FA code.
+// Used by both the CLI flow (via completeWebLogin) and the web server flow directly.
+func (c *Client) CompleteWebLogin(code string) error {
 	if c.processID == "" {
 		return fmt.Errorf("no process ID available, call InitiateWebLogin first")
 	}

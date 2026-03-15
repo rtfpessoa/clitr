@@ -150,6 +150,97 @@ func TestResumeWebSession_InvalidSession(t *testing.T) {
 	assert.False(t, result)
 }
 
+func TestInitiateWebLoginWithCredentials_Success(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == "POST" && r.URL.Path == "/api/v1/auth/web/login" {
+			w.WriteHeader(http.StatusOK)
+			w.Write([]byte(`{"processId":"web-process-456","countdownInSeconds":25}`))
+			return
+		}
+		w.WriteHeader(http.StatusNotFound)
+	}))
+	defer server.Close()
+
+	c, err := NewClient("+4912345678", t.TempDir(), false)
+	require.NoError(t, err)
+
+	c.setAPIHost(server.URL)
+
+	// Call exported method directly — no stdin involved
+	countdown, err := c.InitiateWebLoginWithCredentials("+4912345678", "1234")
+	require.NoError(t, err)
+	assert.Equal(t, 26, countdown) // countdownInSeconds + 1
+	assert.Equal(t, "web-process-456", c.processID)
+}
+
+func TestInitiateWebLoginWithCredentials_InvalidCredentials(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == "POST" && r.URL.Path == "/api/v1/auth/web/login" {
+			w.WriteHeader(http.StatusOK)
+			w.Write([]byte(`{"errors":[{"errorCode":"INVALID_CREDENTIALS","errorMsg":"Invalid phone number or PIN"}]}`))
+			return
+		}
+		w.WriteHeader(http.StatusNotFound)
+	}))
+	defer server.Close()
+
+	c, err := NewClient("+4912345678", t.TempDir(), false)
+	require.NoError(t, err)
+
+	c.setAPIHost(server.URL)
+
+	_, err = c.InitiateWebLoginWithCredentials("+4912345678", "0000")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "INVALID_CREDENTIALS")
+}
+
+func TestInitiateWebLoginWithCredentials_ServerError(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusInternalServerError)
+		w.Write([]byte(`internal server error`))
+	}))
+	defer server.Close()
+
+	c, err := NewClient("+4912345678", t.TempDir(), false)
+	require.NoError(t, err)
+
+	c.setAPIHost(server.URL)
+
+	_, err = c.InitiateWebLoginWithCredentials("+4912345678", "1234")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "web login failed with status 500")
+}
+
+func TestCompleteWebLogin_Exported_Success(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == "POST" && r.URL.Path == "/api/v1/auth/web/login/web-process-id/5678" {
+			w.WriteHeader(http.StatusOK)
+			w.Write([]byte(`{}`))
+			return
+		}
+		w.WriteHeader(http.StatusNotFound)
+	}))
+	defer server.Close()
+
+	c, err := NewClient("+4912345678", t.TempDir(), false)
+	require.NoError(t, err)
+
+	c.setAPIHost(server.URL)
+	c.processID = "web-process-id"
+
+	err = c.CompleteWebLogin("5678")
+	require.NoError(t, err)
+}
+
+func TestCompleteWebLogin_Exported_NoProcessId(t *testing.T) {
+	c, err := NewClient("+4912345678", t.TempDir(), false)
+	require.NoError(t, err)
+
+	err = c.CompleteWebLogin("1234")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "no process ID available")
+}
+
 // Helper function to parse URL (panics on error, only for tests)
 func mustParseURL(rawURL string) *url.URL {
 	u, err := url.Parse(rawURL)
