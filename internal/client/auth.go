@@ -3,6 +3,7 @@ package client
 import (
 	"bufio"
 	"bytes"
+	"context"
 	"errors"
 	"fmt"
 	"io"
@@ -58,6 +59,15 @@ func (c *Client) initiateWebLogin(phoneNo string) (int, error) {
 // Returns the countdown in seconds for the 2FA code.
 // Used by the web server flow where credentials arrive via POST form.
 func (c *Client) InitiateWebLoginWithCredentials(phoneNo, pin string) (int, error) {
+	// Acquire and set AWS WAF token before login request
+	wafToken, err := c.wafTokenFetcher(context.Background())
+	if err != nil {
+		return 0, fmt.Errorf("failed to acquire WAF token: %w", err)
+	}
+	if err := c.SetWAFToken(wafToken); err != nil {
+		return 0, fmt.Errorf("failed to set WAF token: %w", err)
+	}
+
 	payload := map[string]string{
 		"phoneNumber": phoneNo,
 		"pin":         pin,

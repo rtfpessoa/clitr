@@ -26,6 +26,7 @@ import (
 	"github.com/rtfpessoa/clitr/internal/json"
 	"github.com/rtfpessoa/clitr/internal/log"
 	"github.com/rtfpessoa/clitr/internal/types"
+	"github.com/rtfpessoa/clitr/internal/waf"
 	"github.com/zalando/go-keyring"
 	"go.uber.org/zap"
 )
@@ -79,6 +80,8 @@ type Client struct {
 	wsHost string
 	// stdinReader is the reader for stdin input (configurable for testing)
 	stdinReader io.Reader
+	// wafTokenFetcher acquires an AWS WAF token (configurable for testing)
+	wafTokenFetcher func(ctx context.Context) (string, error)
 }
 
 // Subscription represents a WebSocket subscription
@@ -114,6 +117,7 @@ func NewClient(phoneNo string, dataDir string, saveCookies bool) (*Client, error
 		apiHost:           defaultAPIHost,
 		wsHost:            wsHost,
 		stdinReader:       os.Stdin,
+		wafTokenFetcher:   waf.FetchToken,
 	}
 
 	// Try to load saved cookies if enabled
@@ -140,6 +144,32 @@ func (c *Client) setStdinReader(reader io.Reader) {
 // setWSHost sets the WebSocket host for testing purposes
 func (c *Client) setWSHost(host string) {
 	c.wsHost = host
+}
+
+// setWAFTokenFetcher sets the WAF token fetcher for testing purposes
+func (c *Client) setWAFTokenFetcher(f func(ctx context.Context) (string, error)) {
+	c.wafTokenFetcher = f
+}
+
+// SetWAFToken sets the aws-waf-token cookie on the HTTP client's cookie jar.
+// This must be called before initiating web login to pass AWS WAF validation.
+func (c *Client) SetWAFToken(token string) error {
+	parsedURL, err := url.Parse(c.apiHost)
+	if err != nil {
+		return fmt.Errorf("failed to parse API host URL: %w", err)
+	}
+
+	cookie := &http.Cookie{
+		Name:     "aws-waf-token",
+		Value:    token,
+		Path:     "/",
+		Secure:   true,
+		HttpOnly: true,
+		Expires:  time.Now().Add(1 * time.Hour),
+	}
+
+	c.httpClient.Jar.SetCookies(parsedURL, []*http.Cookie{cookie})
+	return nil
 }
 
 func (c *Client) AuthenticateClient() error {

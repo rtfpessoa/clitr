@@ -1,6 +1,7 @@
 package client
 
 import (
+	"context"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -10,6 +11,13 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
+
+// mockWAFFetcher returns a WAF token fetcher that always returns the given token.
+func mockWAFFetcher(token string) func(ctx context.Context) (string, error) {
+	return func(_ context.Context) (string, error) {
+		return token, nil
+	}
+}
 
 func TestInitiateWebLogin_Success(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -27,6 +35,7 @@ func TestInitiateWebLogin_Success(t *testing.T) {
 
 	client.setAPIHost(server.URL)
 	client.setStdinReader(strings.NewReader("1234\n")) // Mock PIN input
+	client.setWAFTokenFetcher(mockWAFFetcher("test-waf-token"))
 
 	countdown, err := client.initiateWebLogin("+1234567890")
 	require.NoError(t, err)
@@ -50,6 +59,7 @@ func TestInitiateWebLogin_InvalidCredentials(t *testing.T) {
 
 	client.setAPIHost(server.URL)
 	client.setStdinReader(strings.NewReader("0000\n")) // Mock wrong PIN
+	client.setWAFTokenFetcher(mockWAFFetcher("test-waf-token"))
 
 	_, err = client.initiateWebLogin("+1234567890")
 	require.Error(t, err)
@@ -165,6 +175,7 @@ func TestInitiateWebLoginWithCredentials_Success(t *testing.T) {
 	require.NoError(t, err)
 
 	c.setAPIHost(server.URL)
+	c.setWAFTokenFetcher(mockWAFFetcher("test-waf-token"))
 
 	// Call exported method directly — no stdin involved
 	countdown, err := c.InitiateWebLoginWithCredentials("+4912345678", "1234")
@@ -188,6 +199,7 @@ func TestInitiateWebLoginWithCredentials_InvalidCredentials(t *testing.T) {
 	require.NoError(t, err)
 
 	c.setAPIHost(server.URL)
+	c.setWAFTokenFetcher(mockWAFFetcher("test-waf-token"))
 
 	_, err = c.InitiateWebLoginWithCredentials("+4912345678", "0000")
 	require.Error(t, err)
@@ -205,6 +217,7 @@ func TestInitiateWebLoginWithCredentials_ServerError(t *testing.T) {
 	require.NoError(t, err)
 
 	c.setAPIHost(server.URL)
+	c.setWAFTokenFetcher(mockWAFFetcher("test-waf-token"))
 
 	_, err = c.InitiateWebLoginWithCredentials("+4912345678", "1234")
 	require.Error(t, err)
@@ -239,6 +252,26 @@ func TestCompleteWebLogin_Exported_NoProcessId(t *testing.T) {
 	err = c.CompleteWebLogin("1234")
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "no process ID available")
+}
+
+func TestSetWAFToken_SetsCookie(t *testing.T) {
+	c, err := NewClient("+1234567890", t.TempDir(), false)
+	require.NoError(t, err)
+
+	err = c.SetWAFToken("test-waf-token-value")
+	require.NoError(t, err)
+
+	// Verify cookie is in the jar for the API host
+	cookies := c.httpClient.Jar.Cookies(mustParseURL(defaultAPIHost + "/api/v1/auth/web/login"))
+
+	var found bool
+	for _, cookie := range cookies {
+		if cookie.Name == "aws-waf-token" {
+			found = true
+			assert.Equal(t, "test-waf-token-value", cookie.Value)
+		}
+	}
+	assert.True(t, found, "aws-waf-token cookie should be set in jar")
 }
 
 // Helper function to parse URL (panics on error, only for tests)
