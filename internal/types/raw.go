@@ -2,9 +2,8 @@ package types
 
 import (
 	"bytes"
+	"encoding/json"
 	"fmt"
-
-	"github.com/rtfpessoa/clitr/internal/json"
 )
 
 // RawEvent combines a timeline event with its detailed information as received from the API.
