@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	stdjson "encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -202,47 +201,33 @@ func fetchEvents(ctx context.Context, trclient *client.Client, eventsDir string,
 	return rawEvents, nil
 }
 
-// fetchRawEvents delegates to fetch.FetchAllEvents and converts the typed results
-// back to rawEventFile for disk serialization.
+// fetchRawEvents delegates to fetch.FetchAllEvents and converts the raw maps
+// to rawEventFile for disk serialization, preserving all API fields.
 func fetchRawEvents(ctx context.Context, trclient *client.Client, direction fetch.Direction, cursor *string) ([]*rawEventFile, error) {
-	typedEvents, err := fetch.FetchAllEvents(ctx, trclient, direction, cursor, func(page int, eventsSoFar int) {
+	rawMaps, err := fetch.FetchAllEvents(ctx, trclient, direction, cursor, func(page int, eventsSoFar int) {
 		log.Info("Fetched page", zap.Int("page", page), zap.Int("eventsSoFar", eventsSoFar))
 	})
 	if err != nil {
 		return nil, err
 	}
 
-	return convertToRawEventFiles(typedEvents, cursor)
+	return convertMapsToRawEventFiles(rawMaps, cursor), nil
 }
 
-// convertToRawEventFiles converts typed RawEvent objects to untyped rawEventFile
-// objects for disk persistence. Uses stdlib JSON to preserve field compatibility.
-func convertToRawEventFiles(typedEvents []*types.RawEvent, fallbackCursor *string) ([]*rawEventFile, error) {
-	rawEvents := make([]*rawEventFile, 0, len(typedEvents))
-
-	for _, typed := range typedEvents {
-		// Round-trip through stdlib JSON to convert typed struct to interface{} maps.
-		// This ensures disk files have the same format as before.
-		jsonBytes, err := stdjson.Marshal(typed)
-		if err != nil {
-			return nil, fmt.Errorf("failed to marshal typed event: %w", err)
+// convertMapsToRawEventFiles converts raw combined maps to rawEventFile objects
+// for disk persistence. The maps contain all API fields (including unknown ones),
+// which are preserved because rawEventFile uses interface{} fields.
+func convertMapsToRawEventFiles(rawMaps []map[string]interface{}, fallbackCursor *string) []*rawEventFile {
+	result := make([]*rawEventFile, 0, len(rawMaps))
+	for _, m := range rawMaps {
+		raw := &rawEventFile{
+			TimelineEvent: m["timelineEvent"],
+			Details:       m["details"],
+			PageCursor:    fallbackCursor,
 		}
-
-		var raw rawEventFile
-		if err := stdjson.Unmarshal(jsonBytes, &raw); err != nil {
-			return nil, fmt.Errorf("failed to unmarshal to raw event file: %w", err)
-		}
-
-		// Preserve the page cursor for incremental fetch metadata.
-		// The typed RawEvent carries its own PageCursor; if nil, use the fallback.
-		if raw.PageCursor == nil {
-			raw.PageCursor = fallbackCursor
-		}
-
-		rawEvents = append(rawEvents, &raw)
+		result = append(result, raw)
 	}
-
-	return rawEvents, nil
+	return result
 }
 
 func saveRawEvents(rawEvents []*rawEventFile, dir string) error {

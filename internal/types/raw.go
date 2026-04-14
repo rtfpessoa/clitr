@@ -438,9 +438,12 @@ type ContextParams struct {
 	IBAN                       string `json:"iban,omitempty"`
 	SavingsPlanID              string `json:"savingsPlanId,omitempty"`
 	InterestPayoutID           string `json:"interestPayoutId,omitempty"`
+	NHCTimelineEventID         string `json:"NHC_timelineEventId,omitempty"`
+
+	// PayloadContent represents the content structure in payloads.
+	TradeID string `json:"tradeId,omitempty"`
 }
 
-// PayloadContent represents the content structure in payloads.
 type PayloadContent struct {
 	Title    string `json:"title"`
 	Subtitle string `json:"subtitle,omitempty"`

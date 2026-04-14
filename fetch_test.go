@@ -6,6 +6,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/rtfpessoa/clitr/internal/patch"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -201,12 +202,104 @@ func TestSaveRawEvents_PreservesUnknownFields(t *testing.T) {
 	assert.Contains(t, string(data), "newDetailKey")
 }
 
-func TestConvertToRawEventFiles(t *testing.T) {
-	// Test that convertToRawEventFiles preserves the fallback cursor
+func TestConvertMapsToRawEventFiles(t *testing.T) {
+	cursor := "fallback-cursor"
+	rawMaps := []map[string]interface{}{
+		{
+			"timelineEvent": map[string]interface{}{
+				"id":        "event-1",
+				"timestamp": "2024-01-15T10:30:00.000+0100",
+				"status":    "EXECUTED",
+			},
+			"details": map[string]interface{}{
+				"id":       "event-1",
+				"sections": []interface{}{},
+			},
+		},
+	}
+
+	result := convertMapsToRawEventFiles(rawMaps, &cursor)
+	require.Len(t, result, 1)
+	assert.Equal(t, &cursor, result[0].PageCursor)
+	assert.NotNil(t, result[0].TimelineEvent)
+	assert.NotNil(t, result[0].Details)
+}
+
+func TestConvertMapsToRawEventFiles_Empty(t *testing.T) {
 	cursor := "test-cursor"
-	result, err := convertToRawEventFiles(nil, &cursor)
-	require.NoError(t, err)
+	result := convertMapsToRawEventFiles(nil, &cursor)
 	assert.Empty(t, result)
+}
+
+func TestConvertMapsToRawEventFiles_PreservesUnknownFields(t *testing.T) {
+	rawMaps := []map[string]interface{}{
+		{
+			"timelineEvent": map[string]interface{}{
+				"id":           "event-1",
+				"timestamp":    "2024-01-15T10:30:00.000+0100",
+				"status":       "EXECUTED",
+				"unknownField": "preserved",
+			},
+			"details": map[string]interface{}{
+				"id":           "event-1",
+				"sections":     []interface{}{},
+				"newDetailKey": true,
+			},
+		},
+	}
+
+	result := convertMapsToRawEventFiles(rawMaps, nil)
+	require.Len(t, result, 1)
+
+	// Verify unknown fields survive in the rawEventFile
+	eventMap := result[0].TimelineEvent.(map[string]interface{})
+	assert.Equal(t, "preserved", eventMap["unknownField"])
+
+	detailMap := result[0].Details.(map[string]interface{})
+	assert.Equal(t, true, detailMap["newDetailKey"])
+}
+
+// TestEndToEnd_UnknownFieldsSurviveSaveToPatchDetect verifies the full pipeline:
+// raw maps with unknown fields → save to disk → patch.DetectUnknownFields finds them.
+func TestEndToEnd_UnknownFieldsSurviveSaveToPatchDetect(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	rawMaps := []map[string]interface{}{
+		{
+			"timelineEvent": map[string]interface{}{
+				"id":             "event-1",
+				"timestamp":      "2024-01-15T10:30:00.000+0100",
+				"title":          "Test Event",
+				"status":         "EXECUTED",
+				"eventType":      "order_executed",
+				"brandNewAPIKey": "surprise",
+			},
+			"details": map[string]interface{}{
+				"id":       "event-1",
+				"sections": []interface{}{},
+			},
+		},
+	}
+
+	rawEventFiles := convertMapsToRawEventFiles(rawMaps, nil)
+	err := saveRawEvents(rawEventFiles, tmpDir)
+	require.NoError(t, err)
+
+	// Now scan with patch detection
+	fields, err := patch.ScanDirectory(tmpDir)
+	require.NoError(t, err)
+	require.NotEmpty(t, fields, "patch should detect unknown fields in saved files")
+
+	// Find the specific unknown field
+	found := false
+	for _, f := range fields {
+		if f.JSONKey == "brandNewAPIKey" {
+			found = true
+			assert.Equal(t, "TimelineEvent", f.StructName)
+			break
+		}
+	}
+	assert.True(t, found, "should detect 'brandNewAPIKey' as unknown field in TimelineEvent")
 }
 
 // Helper to ensure time.Time can be used in assertions

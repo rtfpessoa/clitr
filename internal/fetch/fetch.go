@@ -18,6 +18,26 @@ import (
 	"go.uber.org/zap"
 )
 
+// ParseRawMaps converts raw combined maps (from FetchAllEvents) into typed RawEvent objects.
+// Uses stdlib encoding/json to tolerate unknown API fields that aren't yet in the Go structs.
+func ParseRawMaps(rawMaps []map[string]interface{}) ([]*types.RawEvent, error) {
+	events := make([]*types.RawEvent, 0, len(rawMaps))
+	for _, m := range rawMaps {
+		jsonBytes, err := stdjson.Marshal(m)
+		if err != nil {
+			log.Warn("Failed to marshal raw map", zap.Error(err))
+			continue
+		}
+		var rawEvent types.RawEvent
+		if err := stdjson.Unmarshal(jsonBytes, &rawEvent); err != nil {
+			log.Warn("Failed to unmarshal raw map to RawEvent", zap.Error(err))
+			continue
+		}
+		events = append(events, &rawEvent)
+	}
+	return events, nil
+}
+
 // ProgressFunc is called after each page of timeline events is fetched.
 // page is the 1-based page number, eventsSoFar is the total events fetched so far.
 type ProgressFunc func(page int, eventsSoFar int)
@@ -59,9 +79,10 @@ type cursorPayload struct {
 // FetchAllEvents fetches all timeline events with their details from the Trade Republic API.
 // It paginates through all pages in the given direction, calling progressFn after each page.
 // progressFn may be nil if no progress reporting is needed.
-// Returns typed RawEvent objects suitable for parsing into Event objects.
-func FetchAllEvents(ctx context.Context, trclient TRClient, direction Direction, cursor *string, progressFn ProgressFunc) ([]*types.RawEvent, error) {
-	var allRawEvents []*types.RawEvent
+// Returns raw combined maps preserving all API fields (including unknown ones).
+// Use ParseRawMaps to convert to typed RawEvent objects when needed.
+func FetchAllEvents(ctx context.Context, trclient TRClient, direction Direction, cursor *string, progressFn ProgressFunc) ([]map[string]interface{}, error) {
+	var allRawMaps []map[string]interface{}
 	page := 0
 
 	for {
@@ -77,14 +98,11 @@ func FetchAllEvents(ctx context.Context, trclient TRClient, direction Direction,
 			return nil, err
 		}
 
-		rawEvents, err := assembleRawEvents(rawItems, details)
-		if err != nil {
-			return nil, fmt.Errorf("failed to assemble raw events: %w", err)
-		}
-		allRawEvents = append(allRawEvents, rawEvents...)
+		rawMaps := assembleCombinedMaps(rawItems, details)
+		allRawMaps = append(allRawMaps, rawMaps...)
 
 		if progressFn != nil {
-			progressFn(page, len(allRawEvents))
+			progressFn(page, len(allRawMaps))
 		}
 
 		var nextCursor *string
@@ -100,10 +118,10 @@ func FetchAllEvents(ctx context.Context, trclient TRClient, direction Direction,
 		}
 
 		cursor = nextCursor
-		log.Info("Fetching next page", zap.Int("totalSoFar", len(allRawEvents)), zap.Stringp("nextCursor", nextCursor))
+		log.Info("Fetching next page", zap.Int("totalSoFar", len(allRawMaps)), zap.Stringp("nextCursor", nextCursor))
 	}
 
-	return allRawEvents, nil
+	return allRawMaps, nil
 }
 
 // ChangeCursor decodes a base64-encoded cursor string,
@@ -300,39 +318,19 @@ detailLoop:
 	return details, nil
 }
 
-// assembleRawEvents combines timeline items with their details into typed RawEvent objects.
-// Uses stdlib encoding/json for the round-trip to tolerate unknown API fields
-// (internal/json uses DisallowUnknownFields which would reject new fields added by TR).
-func assembleRawEvents(rawItems []map[string]interface{}, details map[string]map[string]interface{}) ([]*types.RawEvent, error) {
-	rawEvents := make([]*types.RawEvent, 0, len(rawItems))
-
+// assembleCombinedMaps combines timeline items with their details into raw maps.
+// The maps preserve all API fields (including unknown ones) for disk persistence.
+func assembleCombinedMaps(rawItems []map[string]interface{}, details map[string]map[string]interface{}) []map[string]interface{} {
+	maps := make([]map[string]interface{}, 0, len(rawItems))
 	for _, item := range rawItems {
 		id, _ := item["id"].(string)
-
-		// Build a combined map matching the RawEvent JSON structure
 		combined := map[string]interface{}{
 			"timelineEvent": item,
 			"details":       details[id],
 		}
-
-		// Round-trip through stdlib JSON to convert untyped maps to typed structs.
-		// stdlib json does NOT reject unknown fields, preserving forward compatibility.
-		jsonBytes, err := stdjson.Marshal(combined)
-		if err != nil {
-			log.Warn("Failed to marshal raw event", zap.String("eventID", id), zap.Error(err))
-			continue
-		}
-
-		var rawEvent types.RawEvent
-		if err := stdjson.Unmarshal(jsonBytes, &rawEvent); err != nil {
-			log.Warn("Failed to unmarshal raw event", zap.String("eventID", id), zap.Error(err))
-			continue
-		}
-
-		rawEvents = append(rawEvents, &rawEvent)
+		maps = append(maps, combined)
 	}
-
-	return rawEvents, nil
+	return maps
 }
 
 // getKeys extracts all keys from a map for debugging output.

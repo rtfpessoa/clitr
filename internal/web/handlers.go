@@ -300,7 +300,7 @@ func (h *Handlers) HandleProgressSSE(w http.ResponseWriter, r *http.Request) {
 	defer close(heartbeatDone)
 
 	// Fetch all events with progress callback
-	rawEvents, err := fetch.FetchAllEvents(ctx, wc, fetch.DirectionAfter, nil,
+	rawMaps, err := fetch.FetchAllEvents(ctx, wc, fetch.DirectionAfter, nil,
 		func(page int, eventsSoFar int) {
 			fmt.Fprintf(w, "event: progress\ndata: {\"page\":%d,\"events\":%d}\n\n", page, eventsSoFar)
 			flusher.Flush()
@@ -310,6 +310,15 @@ func (h *Handlers) HandleProgressSSE(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		log.Error("Fetch failed", zap.Error(err))
 		fmt.Fprintf(w, "event: error_event\ndata: Failed to fetch transactions. Please try again.\n\n")
+		flusher.Flush()
+		return
+	}
+
+	// Convert raw maps to typed events for export
+	rawEvents, err := fetch.ParseRawMaps(rawMaps)
+	if err != nil {
+		log.Error("Parse raw maps failed", zap.Error(err))
+		fmt.Fprintf(w, "event: error_event\ndata: Failed to parse transactions.\n\n")
 		flusher.Flush()
 		return
 	}

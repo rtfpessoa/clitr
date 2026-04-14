@@ -1,12 +1,12 @@
 package main
 
 import (
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
 
 	"github.com/rtfpessoa/clitr/internal/export"
-	"github.com/rtfpessoa/clitr/internal/json"
 	"github.com/rtfpessoa/clitr/internal/log"
 	"github.com/rtfpessoa/clitr/internal/types"
 	"github.com/rtfpessoa/clitr/internal/utils"

@@ -236,9 +236,9 @@ func TestFormatSubscriptionID(t *testing.T) {
 	assert.Equal(t, "42", FormatSubscriptionID(42))
 }
 
-// --- assembleRawEvents tests ---
+// --- assembleCombinedMaps tests ---
 
-func TestAssembleRawEvents_Basic(t *testing.T) {
+func TestAssembleCombinedMaps_Basic(t *testing.T) {
 	items := []map[string]interface{}{
 		{"id": "e1", "timestamp": "2024-01-15T10:30:00.000+0100", "title": "Event 1", "status": "EXECUTED", "eventType": "order_executed"},
 		{"id": "e2", "timestamp": "2024-01-16T10:30:00.000+0100", "title": "Event 2", "status": "EXECUTED", "eventType": "incoming_transfer"},
@@ -248,15 +248,17 @@ func TestAssembleRawEvents_Basic(t *testing.T) {
 		"e2": {"id": "e2", "sections": []interface{}{}},
 	}
 
-	result, err := assembleRawEvents(items, details)
-	require.NoError(t, err)
+	result := assembleCombinedMaps(items, details)
 	require.Len(t, result, 2)
 
-	assert.Equal(t, "e1", result[0].TimelineEvent.ID)
-	assert.Equal(t, "e2", result[1].TimelineEvent.ID)
+	// Verify combined map structure
+	event1 := result[0]["timelineEvent"].(map[string]interface{})
+	assert.Equal(t, "e1", event1["id"])
+	event2 := result[1]["timelineEvent"].(map[string]interface{})
+	assert.Equal(t, "e2", event2["id"])
 }
 
-func TestAssembleRawEvents_MissingDetail(t *testing.T) {
+func TestAssembleCombinedMaps_MissingDetail(t *testing.T) {
 	items := []map[string]interface{}{
 		{"id": "e1", "timestamp": "2024-01-15T10:30:00.000+0100", "title": "Event 1", "status": "EXECUTED", "eventType": "order_executed"},
 	}
@@ -264,17 +266,82 @@ func TestAssembleRawEvents_MissingDetail(t *testing.T) {
 		// No detail for e1
 	}
 
-	result, err := assembleRawEvents(items, details)
-	require.NoError(t, err)
+	result := assembleCombinedMaps(items, details)
 	require.Len(t, result, 1)
 
-	assert.Equal(t, "e1", result[0].TimelineEvent.ID)
+	event := result[0]["timelineEvent"].(map[string]interface{})
+	assert.Equal(t, "e1", event["id"])
+	assert.Nil(t, result[0]["details"])
 }
 
-func TestAssembleRawEvents_Empty(t *testing.T) {
-	result, err := assembleRawEvents(nil, nil)
-	require.NoError(t, err)
+func TestAssembleCombinedMaps_Empty(t *testing.T) {
+	result := assembleCombinedMaps(nil, nil)
 	assert.Empty(t, result)
+}
+
+func TestAssembleCombinedMaps_PreservesUnknownFields(t *testing.T) {
+	items := []map[string]interface{}{
+		{"id": "e1", "unknownField": "preserved", "title": "Event 1"},
+	}
+	details := map[string]map[string]interface{}{
+		"e1": {"id": "e1", "newDetailKey": true},
+	}
+
+	result := assembleCombinedMaps(items, details)
+	require.Len(t, result, 1)
+
+	event := result[0]["timelineEvent"].(map[string]interface{})
+	assert.Equal(t, "preserved", event["unknownField"])
+
+	detail := result[0]["details"].(map[string]interface{})
+	assert.Equal(t, true, detail["newDetailKey"])
+}
+
+// --- ParseRawMaps tests ---
+
+func TestParseRawMaps_Basic(t *testing.T) {
+	rawMaps := []map[string]interface{}{
+		{
+			"timelineEvent": map[string]interface{}{
+				"id": "e1", "timestamp": "2024-01-15T10:30:00.000+0100",
+				"title": "Event 1", "status": "EXECUTED", "eventType": "order_executed",
+			},
+			"details": map[string]interface{}{
+				"id": "e1", "sections": []interface{}{},
+			},
+		},
+	}
+
+	events, err := ParseRawMaps(rawMaps)
+	require.NoError(t, err)
+	require.Len(t, events, 1)
+	assert.Equal(t, "e1", events[0].TimelineEvent.ID)
+}
+
+func TestParseRawMaps_ToleratesUnknownFields(t *testing.T) {
+	rawMaps := []map[string]interface{}{
+		{
+			"timelineEvent": map[string]interface{}{
+				"id": "e1", "timestamp": "2024-01-15T10:30:00.000+0100",
+				"title": "Event 1", "status": "EXECUTED", "eventType": "order_executed",
+				"brandNewField": "should not cause error",
+			},
+			"details": map[string]interface{}{
+				"id": "e1", "sections": []interface{}{},
+			},
+		},
+	}
+
+	events, err := ParseRawMaps(rawMaps)
+	require.NoError(t, err)
+	require.Len(t, events, 1)
+	assert.Equal(t, "e1", events[0].TimelineEvent.ID)
+}
+
+func TestParseRawMaps_Empty(t *testing.T) {
+	events, err := ParseRawMaps(nil)
+	require.NoError(t, err)
+	assert.Empty(t, events)
 }
 
 // --- FetchAllEvents integration tests ---
@@ -285,48 +352,36 @@ func TestFetchAllEvents_SinglePage(t *testing.T) {
 
 	var progressCalls []struct{ page, events int }
 
-	// Run FetchAllEvents in a goroutine since it blocks on Recv()
 	resultCh := make(chan struct {
-		events []*typesRawEvent
-		err    error
+		rawMaps []map[string]interface{}
+		err     error
 	}, 1)
 
-	type result struct {
-		events interface{}
-		err    error
-	}
-
 	go func() {
-		events, err := FetchAllEvents(ctx, mock, DirectionAfter, nil, func(page, eventsSoFar int) {
+		rawMaps, err := FetchAllEvents(ctx, mock, DirectionAfter, nil, func(page, eventsSoFar int) {
 			progressCalls = append(progressCalls, struct{ page, events int }{page, eventsSoFar})
 		})
 		resultCh <- struct {
-			events []*typesRawEvent
-			err    error
-		}{events: nil, err: err}
-		_ = events
+			rawMaps []map[string]interface{}
+			err     error
+		}{rawMaps: rawMaps, err: err}
 	}()
-
-	// Wait for TimelineTransactions to be called, then send timeline response
-	// The mock sends on the channel immediately, so we send the timeline message
-	// after a brief moment to let FetchAllEvents start reading
-	timelinePayload := map[string]interface{}{
-		"items": []interface{}{
-			map[string]interface{}{
-				"id":        "event-1",
-				"timestamp": "2024-01-15T10:30:00.000+0100",
-				"title":     "Apple Inc.",
-				"status":    "EXECUTED",
-				"eventType": "order_executed",
-			},
-		},
-		"cursors": map[string]interface{}{},
-	}
 
 	// Send timeline page response (subscription ID will be "sub-1")
 	mock.sendMessage(client.Message{
 		SubscriptionID: "sub-1",
-		Payload:        timelinePayload,
+		Payload: map[string]interface{}{
+			"items": []interface{}{
+				map[string]interface{}{
+					"id":        "event-1",
+					"timestamp": "2024-01-15T10:30:00.000+0100",
+					"title":     "Apple Inc.",
+					"status":    "EXECUTED",
+					"eventType": "order_executed",
+				},
+			},
+			"cursors": map[string]interface{}{},
+		},
 	})
 
 	// Send detail response (subscription ID will be "sub-2")
@@ -340,6 +395,12 @@ func TestFetchAllEvents_SinglePage(t *testing.T) {
 
 	res := <-resultCh
 	require.NoError(t, res.err)
+	require.Len(t, res.rawMaps, 1)
+
+	// Verify the raw map preserves all fields
+	event := res.rawMaps[0]["timelineEvent"].(map[string]interface{})
+	assert.Equal(t, "event-1", event["id"])
+	assert.Equal(t, "Apple Inc.", event["title"])
 }
 
 func TestFetchAllEvents_ErrorFromWebSocket(t *testing.T) {
@@ -404,13 +465,6 @@ func TestParseTimestamp(t *testing.T) {
 func TestParseTimestamp_Invalid(t *testing.T) {
 	_, err := ParseTimestamp("not-a-timestamp")
 	require.Error(t, err)
-}
-
-// typesRawEvent is imported as types.RawEvent but we need the alias for the channel
-type typesRawEvent = struct {
-	TimelineEvent interface{}
-	Details       interface{}
-	PageCursor    *string
 }
 
 // --- getKeys test ---
