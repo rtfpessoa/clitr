@@ -68,6 +68,24 @@ func (c *Client) InitiateWebLoginWithCredentials(phoneNo, pin string) (int, erro
 		return 0, fmt.Errorf("failed to set WAF token: %w", err)
 	}
 
+	// Make a preliminary GET to the API domain to establish a session.
+	// The API requires a session cookie (set by visiting the API domain) in addition
+	// to the WAF token. Without it, the login POST returns 405 (Method Not Allowed).
+	// This mimics a real browser flow where the user visits the API before logging in.
+	{
+		getReq, getErr := http.NewRequest("GET", c.apiHost+"/api/v1/auth/web/login", nil)
+		if getErr != nil {
+			return 0, fmt.Errorf("failed to create session request: %w", getErr)
+		}
+		getReq.Header.Set("User-Agent", UserAgentHeaderValue)
+		getResp, getErr := c.httpClient.Do(getReq)
+		if getErr != nil {
+			return 0, fmt.Errorf("failed to establish session: %w", getErr)
+		}
+		closeBody(getResp.Body)
+		// Response status doesn't matter; we only need the Set-Cookie headers
+	}
+
 	payload := map[string]string{
 		"phoneNumber": phoneNo,
 		"pin":         pin,
