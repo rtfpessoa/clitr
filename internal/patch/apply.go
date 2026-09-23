@@ -1,6 +1,7 @@
 package patch
 
 import (
+	"bytes"
 	"fmt"
 	"go/ast"
 	"go/format"
@@ -57,54 +58,9 @@ func applyToFile(filePath string, fields []UnknownField) error {
 		return fmt.Errorf("failed to parse file: %w", err)
 	}
 
-	modified := false
-
-	// Group fields by struct name for efficient lookup
-	fieldsByStruct := make(map[string][]UnknownField)
-	for _, field := range fields {
-		fieldsByStruct[field.StructName] = append(fieldsByStruct[field.StructName], field)
-	}
-
-	// Track which structs need text-based assignment insertion
-	var assignmentInfos []assignmentInfo
-
-	// Pass 1: AST-based struct field additions
-	ast.Inspect(f, func(n ast.Node) bool {
-		switch node := n.(type) {
-		case *ast.TypeSpec:
-			if structFields, ok := fieldsByStruct[node.Name.Name]; ok {
-				if st, ok := node.Type.(*ast.StructType); ok {
-					for _, sf := range structFields {
-						if addFieldToStruct(st, sf) {
-							modified = true
-						}
-					}
-				}
-			}
-		case *ast.FuncDecl:
-			if node.Name.Name == "UnmarshalJSON" && node.Recv != nil && len(node.Recv.List) > 0 {
-				recvName := getReceiverTypeName(node.Recv.List[0].Type)
-				if recvName == "" {
-					return true
-				}
-				structFields, ok := fieldsByStruct[recvName]
-				if !ok {
-					return true
-				}
-				recvVarName := getReceiverVarName(node.Recv.List[0])
-				if patchInnerRawStruct(node, structFields) {
-					modified = true
-					assignmentInfos = append(assignmentInfos, assignmentInfo{
-						recvVar: recvVarName,
-						fields:  structFields,
-					})
-				}
-			}
-		}
-		return true
-	})
-
-	if !modified {
+	plan := newPatchPlan(fields)
+	ast.Inspect(f, plan.inspect)
+	if !plan.modified {
 		return nil
 	}
 
@@ -122,11 +78,64 @@ func applyToFile(filePath string, fields []UnknownField) error {
 	}
 
 	// Pass 2: Text-based assignment line insertion
-	if len(assignmentInfos) > 0 {
-		return insertAssignmentLines(filePath, assignmentInfos)
+	if len(plan.assignments) > 0 {
+		return insertAssignmentLines(filePath, plan.assignments)
 	}
 
 	return nil
+}
+
+type patchPlan struct {
+	fieldsByStruct map[string][]UnknownField
+	assignments    []assignmentInfo
+	modified       bool
+}
+
+func newPatchPlan(fields []UnknownField) *patchPlan {
+	plan := &patchPlan{fieldsByStruct: make(map[string][]UnknownField)}
+	for _, field := range fields {
+		plan.fieldsByStruct[field.StructName] = append(plan.fieldsByStruct[field.StructName], field)
+	}
+	return plan
+}
+
+func (p *patchPlan) inspect(node ast.Node) bool {
+	switch node := node.(type) {
+	case *ast.TypeSpec:
+		p.patchType(node)
+	case *ast.FuncDecl:
+		p.patchUnmarshalMethod(node)
+	}
+	return true
+}
+
+func (p *patchPlan) patchType(node *ast.TypeSpec) {
+	fields := p.fieldsByStruct[node.Name.Name]
+	st, ok := node.Type.(*ast.StructType)
+	if !ok {
+		return
+	}
+	for _, field := range fields {
+		if addFieldToStruct(st, field) {
+			p.modified = true
+		}
+	}
+}
+
+func (p *patchPlan) patchUnmarshalMethod(node *ast.FuncDecl) {
+	if node.Name.Name != "UnmarshalJSON" || node.Recv == nil || len(node.Recv.List) == 0 {
+		return
+	}
+	receiver := node.Recv.List[0]
+	fields := p.fieldsByStruct[getReceiverTypeName(receiver.Type)]
+	if len(fields) == 0 || !patchInnerRawStruct(node, fields) {
+		return
+	}
+	p.modified = true
+	p.assignments = append(p.assignments, assignmentInfo{
+		recvVar: getReceiverVarName(receiver),
+		fields:  fields,
+	})
 }
 
 // addFieldToStruct adds a field to a struct if it doesn't already exist (by json tag).
@@ -179,40 +188,39 @@ func patchInnerRawStruct(funcDecl *ast.FuncDecl, fields []UnknownField) bool {
 	if funcDecl.Body == nil {
 		return false
 	}
-
+	structs := findInnerRawStructs(funcDecl.Body)
+	if len(structs) == 0 {
+		return false
+	}
 	modified := false
-	for _, stmt := range funcDecl.Body.List {
-		ds, ok := stmt.(*ast.DeclStmt)
-		if !ok {
-			continue
-		}
-		gd, ok := ds.Decl.(*ast.GenDecl)
-		if !ok {
-			continue
-		}
-		for _, spec := range gd.Specs {
-			vs, ok := spec.(*ast.ValueSpec)
-			if !ok {
-				continue
-			}
-			for _, name := range vs.Names {
-				if name.Name != "raw" {
-					continue
-				}
-				st, ok := vs.Type.(*ast.StructType)
-				if !ok {
-					continue
-				}
-				for _, field := range fields {
-					if addFieldToStruct(st, field) {
-						modified = true
-					}
-				}
+	for _, st := range structs {
+		for _, field := range fields {
+			if addFieldToStruct(st, field) {
+				modified = true
 			}
 		}
 	}
-
 	return modified
+}
+
+func findInnerRawStructs(body *ast.BlockStmt) []*ast.StructType {
+	var structs []*ast.StructType
+	ast.Inspect(body, func(node ast.Node) bool {
+		value, ok := node.(*ast.ValueSpec)
+		if !ok {
+			return true
+		}
+		for _, name := range value.Names {
+			if name.Name == "raw" {
+				if st, ok := value.Type.(*ast.StructType); ok {
+					structs = append(structs, st)
+				}
+				return false
+			}
+		}
+		return true
+	})
+	return structs
 }
 
 // assignmentInfo pairs a receiver variable with the fields that need assignment lines.
@@ -384,36 +392,16 @@ func ensureImport(f *ast.File, importPath string) {
 
 // writeFile formats and writes an AST back to a file.
 func writeFile(fset *token.FileSet, f *ast.File, filePath string) error {
-	tmpPath := filePath + ".tmp"
-	tmpFile, err := os.Create(tmpPath)
-	if err != nil {
-		return fmt.Errorf("failed to create temp file: %w", err)
-	}
-
-	if err := format.Node(tmpFile, fset, f); err != nil {
-		tmpFile.Close()
-		os.Remove(tmpPath)
+	var output bytes.Buffer
+	if err := format.Node(&output, fset, f); err != nil {
 		return fmt.Errorf("failed to format AST: %w", err)
 	}
-	tmpFile.Close()
-
-	content, err := os.ReadFile(tmpPath)
+	formatted, err := format.Source(output.Bytes())
 	if err != nil {
-		os.Remove(tmpPath)
-		return fmt.Errorf("failed to read temp file: %w", err)
-	}
-
-	formatted, err := format.Source(content)
-	if err != nil {
-		os.Remove(tmpPath)
 		return fmt.Errorf("failed to format source: %w", err)
 	}
-
 	if err := os.WriteFile(filePath, formatted, 0644); err != nil {
-		os.Remove(tmpPath)
 		return fmt.Errorf("failed to write file: %w", err)
 	}
-
-	os.Remove(tmpPath)
 	return nil
 }
