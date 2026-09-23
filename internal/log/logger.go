@@ -27,26 +27,32 @@ func init() {
 	}
 }
 
+// SetLevel changes the minimum level emitted by the shared logger.
 func SetLevel(level zapcore.Level) {
 	atomicLevel.SetLevel(level)
 }
 
+// Debug logs diagnostic details when debug logging is enabled.
 func Debug(msg string, fields ...zap.Field) {
 	logger.Debug(msg, fields...)
 }
 
+// Info logs normal application progress.
 func Info(msg string, fields ...zap.Field) {
 	logger.Info(msg, fields...)
 }
 
+// Warn logs a recoverable problem that needs attention.
 func Warn(msg string, fields ...zap.Field) {
 	logger.Warn(msg, fields...)
 }
 
+// Error logs a failure along with any structured context.
 func Error(msg string, fields ...zap.Field) {
 	logger.Error(msg, fields...)
 }
 
+// Sync flushes buffered log output, ignoring unsupported stream sync errors.
 func Sync() {
 	// Ignore errors from syncing stderr/stdout (common on some systems)
 	// See: https://github.com/uber-go/zap/issues/880
