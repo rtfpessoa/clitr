@@ -18,14 +18,14 @@ import (
 var (
 	phoneRegex = regexp.MustCompile(`^\+\d{7,15}$`)
 	pinRegex   = regexp.MustCompile(`^\d{4}$`)
-	codeRegex  = regexp.MustCompile(`^\d{4}$`)
+	codeRegex  = regexp.MustCompile(`^\d{4,8}$`)
 )
 
 // WebClient defines the interface that handlers need from the Trade Republic client.
 // *client.Client satisfies this interface.
 type WebClient interface {
-	InitiateWebLoginWithCredentials(phone, pin string) (int, error)
-	CompleteWebLogin(code string) error
+	InitiateWebLoginV2(phone, pin string) (client.LoginChallenge, error)
+	CompleteWebLoginV2(ctx context.Context, code string) error
 	TimelineTransactions(ctx context.Context, after *string) (string, error)
 	TimelineDetailV2(ctx context.Context, timelineID string) (string, error)
 	Unsubscribe(ctx context.Context, subscriptionID string) error
@@ -76,67 +76,69 @@ func (h *Handlers) HandleLoginSubmit(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	nonce := NonceFromContext(r.Context())
-
 	phone := r.FormValue("phone")
 	pin := r.FormValue("pin")
 
-	// Validate phone format
-	if !validatePhone(phone) {
-		w.Header().Set("Content-Type", "text/html; charset=utf-8")
-		_ = h.templates.RenderLogin(w, LoginData{
-			Nonce:     nonce,
-			CSRFToken: session.CSRFToken,
-			Error:     "Invalid phone number format. Use international format (e.g., +49123456789).",
-		})
+	if message := loginFormError(phone, pin); message != "" {
+		h.renderLoginError(w, r, session, message)
 		return
 	}
 
-	// Validate PIN format
-	if !validatePIN(pin) {
-		w.Header().Set("Content-Type", "text/html; charset=utf-8")
-		_ = h.templates.RenderLogin(w, LoginData{
-			Nonce:     nonce,
-			CSRFToken: session.CSRFToken,
-			Error:     "Invalid PIN format. Must be exactly 4 digits.",
-		})
-		return
-	}
-
-	// Create TR client and initiate login
-	trClient, err := h.clientFactory(phone)
-	if err != nil {
-		log.Error("Failed to create client", zap.Error(err))
-		w.Header().Set("Content-Type", "text/html; charset=utf-8")
-		_ = h.templates.RenderLogin(w, LoginData{
-			Nonce:     nonce,
-			CSRFToken: session.CSRFToken,
-			Error:     "Failed to connect to Trade Republic. Please try again.",
-		})
-		return
-	}
-
-	countdown, err := trClient.InitiateWebLoginWithCredentials(phone, pin)
-	if err != nil {
-		log.Info("Login initiation failed")
-		_ = trClient.Close()
-		w.Header().Set("Content-Type", "text/html; charset=utf-8")
-		_ = h.templates.RenderLogin(w, LoginData{
-			Nonce:     nonce,
-			CSRFToken: session.CSRFToken,
-			Error:     "Login failed. Please check your credentials and try again.",
-		})
+	attempt := h.beginLogin(phone, pin)
+	if attempt.errorMessage != "" {
+		h.renderLoginError(w, r, session, attempt.errorMessage)
 		return
 	}
 
 	// Store client and update session state
-	session.Client = trClient
-	session.Countdown = countdown
+	session.Client = attempt.client
+	session.Countdown = attempt.challenge.Countdown
+	session.RequiresAuthenticator = attempt.challenge.RequiresAuthenticator
 	session.State = StateTwoFA
 	h.store.Touch(session.ID)
 
 	log.Info("Login initiated successfully")
 	http.Redirect(w, r, "/twofa", http.StatusSeeOther)
+}
+
+type loginAttempt struct {
+	client       WebClient
+	challenge    client.LoginChallenge
+	errorMessage string
+}
+
+func (h *Handlers) beginLogin(phone, pin string) loginAttempt {
+	trClient, err := h.clientFactory(phone)
+	if err != nil {
+		log.Error("Failed to create client", zap.Error(err))
+		return loginAttempt{errorMessage: "Failed to connect to Trade Republic. Please try again."}
+	}
+	challenge, err := trClient.InitiateWebLoginV2(phone, pin)
+	if err != nil {
+		log.Info("Login initiation failed")
+		_ = trClient.Close()
+		return loginAttempt{errorMessage: "Login failed. Please check your credentials and try again."}
+	}
+	return loginAttempt{client: trClient, challenge: challenge}
+}
+
+func loginFormError(phone, pin string) string {
+	if !validatePhone(phone) {
+		return "Invalid phone number format. Use international format (e.g., +49123456789)."
+	}
+	if !validatePIN(pin) {
+		return "Invalid PIN format. Must be exactly 4 digits."
+	}
+	return ""
+}
+
+func (h *Handlers) renderLoginError(w http.ResponseWriter, r *http.Request, session *Session, message string) {
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	_ = h.templates.RenderLogin(w, LoginData{
+		Nonce:     NonceFromContext(r.Context()),
+		CSRFToken: session.CSRFToken,
+		Error:     message,
+	})
 }
 
 // HandleTwoFA renders the 2FA verification form (GET /twofa).
@@ -152,9 +154,10 @@ func (h *Handlers) HandleTwoFA(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	if err := h.templates.RenderTwoFA(w, TwoFAData{
-		Nonce:     nonce,
-		CSRFToken: session.CSRFToken,
-		Countdown: session.Countdown,
+		Nonce:                 nonce,
+		CSRFToken:             session.CSRFToken,
+		Countdown:             session.Countdown,
+		RequiresAuthenticator: session.RequiresAuthenticator,
 	}); err != nil {
 		log.Error("Failed to render 2FA template", zap.Error(err))
 	}
@@ -169,18 +172,11 @@ func (h *Handlers) HandleTwoFASubmit(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	nonce := NonceFromContext(r.Context())
 	code := r.FormValue("code")
 
 	// Validate code format
-	if !validateCode(code) {
-		w.Header().Set("Content-Type", "text/html; charset=utf-8")
-		_ = h.templates.RenderTwoFA(w, TwoFAData{
-			Nonce:     nonce,
-			CSRFToken: session.CSRFToken,
-			Countdown: session.Countdown,
-			Error:     "Invalid verification code. Must be exactly 4 digits.",
-		})
+	if session.RequiresAuthenticator && !validateCode(code) {
+		h.renderTwoFAError(w, r, session, session.Countdown, "Invalid authenticator code. Use 4 to 8 digits.")
 		return
 	}
 
@@ -191,19 +187,17 @@ func (h *Handlers) HandleTwoFASubmit(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := wc.CompleteWebLogin(code); err != nil {
+	if err := completeTwoFA(wc, r.Context(), code, session.RequiresAuthenticator); err != nil {
 		log.Info("2FA verification failed")
-		w.Header().Set("Content-Type", "text/html; charset=utf-8")
-		_ = h.templates.RenderTwoFA(w, TwoFAData{
-			Nonce:     nonce,
-			CSRFToken: session.CSRFToken,
-			Countdown: 0, // Countdown may have expired
-			Error:     "Verification failed. Please check your code and try again.",
-		})
+		h.renderTwoFAError(w, r, session, 0, verificationErrorMessage(session.RequiresAuthenticator))
 		return
 	}
 
-	// Finding 5: Rotate session after successful 2FA to prevent session fixation
+	h.finishTwoFASubmit(w, r, session)
+}
+
+func (h *Handlers) finishTwoFASubmit(w http.ResponseWriter, r *http.Request, session *Session) {
+	// Rotate the session after successful 2FA to prevent session fixation.
 	session.State = StateFetching
 	newSession := h.store.Rotate(session.ID)
 	if newSession == nil {
@@ -222,6 +216,31 @@ func (h *Handlers) HandleTwoFASubmit(w http.ResponseWriter, r *http.Request) {
 
 	log.Info("2FA verification successful, session rotated")
 	http.Redirect(w, r, "/progress", http.StatusSeeOther)
+}
+
+func completeTwoFA(wc WebClient, ctx context.Context, code string, requiresAuthenticator bool) error {
+	if !requiresAuthenticator {
+		code = ""
+	}
+	return wc.CompleteWebLoginV2(ctx, code)
+}
+
+func verificationErrorMessage(requiresAuthenticator bool) string {
+	if requiresAuthenticator {
+		return "Verification failed. Please check your code and try again."
+	}
+	return "Approval failed or expired. Please start a new login."
+}
+
+func (h *Handlers) renderTwoFAError(w http.ResponseWriter, r *http.Request, session *Session, countdown int, message string) {
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	_ = h.templates.RenderTwoFA(w, TwoFAData{
+		Nonce:                 NonceFromContext(r.Context()),
+		CSRFToken:             session.CSRFToken,
+		Countdown:             countdown,
+		RequiresAuthenticator: session.RequiresAuthenticator,
+		Error:                 message,
+	})
 }
 
 // HandleProgress renders the progress page (GET /progress).

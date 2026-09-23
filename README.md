@@ -11,7 +11,7 @@ A Go CLI tool to export transaction history from [Trade Republic](https://trader
 ## Features
 
 - **Three-Step Workflow**: Fetch raw data, export to CSV, and self-heal structs when the API changes
-- **Web Login Authentication**: Uses Trade Republic's web login flow with 2FA verification
+- **Web Login Authentication**: Uses Trade Republic's v2 web login with mobile app approval or an authenticator code
 - **Session Persistence**: Optionally save session cookies to avoid re-authenticating every time
 - **Incremental Fetching**: Fetch only new transactions since last run
 - **CSV Export**: Export transactions to a semicolon-delimited CSV file
@@ -41,7 +41,7 @@ go build -o clitr .
 ```bash
 # Step 1: Fetch transactions from Trade Republic
 clitr fetch --phone "+4912345678"
-# You'll be prompted for your PIN and 2FA code
+# You'll be prompted for your PIN, then approve the login in the Trade Republic app
 
 # Step 2: Export to CSV
 clitr export
@@ -58,7 +58,7 @@ clitr serve
 Downloads transaction data from Trade Republic and saves it as JSON files.
 
 ```bash
-# Basic fetch - prompts for PIN and 2FA
+# Basic fetch - prompts for PIN and mobile app approval
 clitr fetch --phone "+4912345678"
 
 # Save session for future use (avoids re-authenticating)
@@ -104,7 +104,7 @@ clitr serve --trusted-proxy
 
 The web UI provides:
 - **Login form** with phone number and PIN input
-- **2FA verification** with countdown timer
+- **Mobile app approval** or authenticator code with countdown timer
 - **Real-time progress** via Server-Sent Events (SSE)
 - **CSV result page** with toggle between raw CSV and sortable table view
 - **Copy to clipboard** for easy export
@@ -171,7 +171,7 @@ clitr --data-dir /path/to/data fetch --phone "+4912345678"
 
 ## How It Works
 
-1. **Fetch**: Authenticates with Trade Republic using phone + PIN + 2FA, then downloads all transactions via their WebSocket API. Raw data is saved as individual JSON files in `~/.local/share/clitr/events/`.
+1. **Fetch**: Authenticates with Trade Republic using phone + PIN + mobile app approval (or an authenticator code), then downloads all transactions via their WebSocket API. Raw data is saved as individual JSON files in `~/.local/share/clitr/events/`.
 
 2. **Export**: Reads the JSON files, parses transaction details (type, ISIN, shares, fees, etc.), and exports to CSV.
 
@@ -207,7 +207,7 @@ The exported CSV uses semicolon (`;`) as delimiter and contains:
 
 ## Security
 
-- **2FA Required**: Every login requires verification via Trade Republic app or SMS
+- **Login Approval Required**: Approve the request in the Trade Republic app, or enter an authenticator code when prompted. The v2 flow does not use SMS codes.
 - **In-Memory by Default**: Credentials are kept in memory only during execution
 - **Secure Cookie Storage**: When using `--save-credentials`, session cookies are stored in your system's secure keychain:
   - **macOS**: Keychain Services (hardware-backed, Touch ID support)
@@ -240,7 +240,9 @@ Session cookies are stored in your system keyring, not on the filesystem.
 ### "Login failed" error
 - Verify phone number is in international format (e.g., `+4912345678`)
 - Ensure PIN is correct (4 digits)
-- Check that you're receiving 2FA codes in your Trade Republic app
+- Open the Trade Republic app and approve the login request before it expires
+- If prompted, enter the code from your authenticator app
+- If the API reports `MISSING_REQUIRED_HEADER` or `CLIENT_VERSION_OUTDATED`, the web app version in `internal/client/auth_v2.go` may need updating
 
 ### "Session expired" error
 - Your saved session has expired, re-authenticate with `--save-credentials`
@@ -286,7 +288,7 @@ clitr/
 │   │   └── file.go            # Path resolution
 │   └── web/                   # Web server
 │       ├── server.go          # HTTP server, routes, middleware chain
-│       ├── handlers.go        # Request handlers (login, 2FA, progress, result)
+│       ├── handlers.go        # Request handlers (login, approval, progress, result)
 │       ├── middleware.go       # Security headers, body size limits
 │       ├── session.go         # In-memory session store with TTL
 │       ├── csrf.go            # CSRF token generation/validation
@@ -294,7 +296,7 @@ clitr/
 │       └── templates/         # Embedded HTML templates
 │           ├── base.html      # Base layout with responsive CSS
 │           ├── login.html     # Phone + PIN login form
-│           ├── twofa.html     # 2FA verification
+│           ├── twofa.html     # Login approval or authenticator code
 │           ├── progress.html  # Real-time progress (SSE)
 │           ├── result.html    # CSV display with sortable table
 │           └── error.html     # Error page

@@ -81,9 +81,10 @@ func TestTemplates_TwoFARender(t *testing.T) {
 
 	var buf bytes.Buffer
 	err = templates.RenderTwoFA(&buf, TwoFAData{
-		Nonce:     "twofa-nonce",
-		CSRFToken: "twofa-csrf",
-		Countdown: 60,
+		Nonce:                 "twofa-nonce",
+		CSRFToken:             "twofa-csrf",
+		Countdown:             60,
+		RequiresAuthenticator: true,
 	})
 	require.NoError(t, err)
 

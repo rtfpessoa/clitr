@@ -3,7 +3,6 @@
 package client
 
 import (
-	"bufio"
 	"bytes"
 	"compress/gzip"
 	"context"
@@ -26,7 +25,6 @@ import (
 	"github.com/rtfpessoa/clitr/internal/json"
 	"github.com/rtfpessoa/clitr/internal/log"
 	"github.com/rtfpessoa/clitr/internal/types"
-	"github.com/rtfpessoa/clitr/internal/waf"
 	"github.com/zalando/go-keyring"
 	"go.uber.org/zap"
 )
@@ -61,8 +59,11 @@ type Client struct {
 	wsContext  context.Context
 	wsCancel   context.CancelFunc
 
-	processID              string
-	webSessionTokenExpires time.Time
+	processID               string
+	v2DeviceInfo            string
+	v2RequiresAuthenticator bool
+	v2Deadline              time.Time
+	webSessionTokenExpires  time.Time
 
 	dataDir     string // data directory for legacy cookie migration
 	saveCookies bool
@@ -80,8 +81,6 @@ type Client struct {
 	wsHost string
 	// stdinReader is the reader for stdin input (configurable for testing)
 	stdinReader io.Reader
-	// wafTokenFetcher acquires an AWS WAF token (configurable for testing)
-	wafTokenFetcher func(ctx context.Context) (string, error)
 }
 
 // Subscription represents a WebSocket subscription
@@ -117,7 +116,6 @@ func NewClient(phoneNo string, dataDir string, saveCookies bool) (*Client, error
 		apiHost:           defaultAPIHost,
 		wsHost:            wsHost,
 		stdinReader:       os.Stdin,
-		wafTokenFetcher:   waf.FetchToken,
 	}
 
 	// Try to load saved cookies if enabled
@@ -144,68 +142,6 @@ func (c *Client) setStdinReader(reader io.Reader) {
 // setWSHost sets the WebSocket host for testing purposes
 func (c *Client) setWSHost(host string) {
 	c.wsHost = host
-}
-
-// setWAFTokenFetcher sets the WAF token fetcher for testing purposes
-func (c *Client) setWAFTokenFetcher(f func(ctx context.Context) (string, error)) {
-	c.wafTokenFetcher = f
-}
-
-// SetWAFToken sets the aws-waf-token cookie on the HTTP client's cookie jar.
-// This must be called before initiating web login to pass AWS WAF validation.
-func (c *Client) SetWAFToken(token string) error {
-	parsedURL, err := url.Parse(c.apiHost)
-	if err != nil {
-		return fmt.Errorf("failed to parse API host URL: %w", err)
-	}
-
-	cookie := &http.Cookie{
-		Name:     "aws-waf-token",
-		Value:    token,
-		Path:     "/",
-		Secure:   true,
-		HttpOnly: true,
-		Expires:  time.Now().Add(1 * time.Hour),
-	}
-
-	c.httpClient.Jar.SetCookies(parsedURL, []*http.Cookie{cookie})
-	return nil
-}
-
-func (c *Client) AuthenticateClient() error {
-	log.Info("Connecting to Trade Republic")
-
-	// Try to resume existing session if cookies are saved
-	if c.saveCookies && c.resumeWebSession() {
-		log.Info("Resumed existing session from saved cookies")
-		return nil
-	}
-
-	// Initiate web login
-	log.Info("Initiating login")
-	countdown, err := c.initiateWebLogin(c.phoneNo)
-	if err != nil {
-		return fmt.Errorf("login failed: %w", err)
-	}
-
-	// Prompt for 2FA code
-	fmt.Printf("A 4-digit code has been sent to your Trade Republic app.\n")
-	fmt.Printf("Please enter the code (valid for %d seconds): ", countdown)
-
-	reader := bufio.NewReader(c.stdinReader)
-	codeInput, err := reader.ReadString('\n')
-	if err != nil {
-		return fmt.Errorf("failed to read 2FA code: %w", err)
-	}
-	code := strings.TrimSpace(codeInput)
-
-	// Complete login
-	if err := c.completeWebLogin(code); err != nil {
-		return fmt.Errorf("2FA verification failed: %w", err)
-	}
-	log.Info("Login successful")
-
-	return nil
 }
 
 // Close closes the WebSocket connection
@@ -832,4 +768,3 @@ func (c *Client) TimelineTransactions(ctx context.Context, after *string) (strin
 	}
 	return c.Subscribe(ctx, payload)
 }
-

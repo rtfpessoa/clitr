@@ -1,30 +1,35 @@
-{{define "title"}}2FA Verification - Trade Republic CSV Export{{end}}
+{{define "title"}}Login Approval - Trade Republic CSV Export{{end}}
 
 {{define "content"}}
-<h1>Two-Factor Authentication</h1>
+<h1>Approve your login</h1>
 <div class="card">
     {{if .Error}}
     <div class="error-message">{{.Error}}</div>
     {{end}}
     <form method="POST" action="/twofa">
         <input type="hidden" name="csrf_token" value="{{.CSRFToken}}">
+        {{if .RequiresAuthenticator}}
         <div class="form-group">
-            <label for="code">Verification Code</label>
+            <label for="code">Authenticator code</label>
             <input type="text" id="code" name="code"
-                   maxlength="4"
+                   maxlength="8"
                    inputmode="numeric"
-                   pattern="\d{4}"
-                   placeholder="4-digit code"
+                   pattern="\d{4,8}"
+                   placeholder="Code from your authenticator app"
                    required
                    autocomplete="one-time-code">
         </div>
         <button type="submit" class="btn">Verify</button>
+        {{else}}
+        <p>Confirm the login request in your Trade Republic app, then continue here.</p>
+        <button type="submit" class="btn">Continue after approval</button>
+        {{end}}
     </form>
     <p class="info-text" id="countdown">
         {{if gt .Countdown 0}}
-        Check your Trade Republic app. Code expires in <span id="timer">{{.Countdown}}</span>s.
+        Login request expires in <span id="timer">{{.Countdown}}</span>s.
         {{else}}
-        Check your Trade Republic app for the verification code.
+        Login request may have expired. <a href="/login">Start again</a>.
         {{end}}
     </p>
 </div>
@@ -39,7 +44,7 @@
         remaining--;
         if (remaining <= 0) {
             clearInterval(interval);
-            timerEl.parentElement.textContent = 'Code may have expired. Request a new one if needed.';
+            timerEl.parentElement.textContent = 'Login request may have expired. Start again if needed.';
         } else {
             timerEl.textContent = remaining;
         }

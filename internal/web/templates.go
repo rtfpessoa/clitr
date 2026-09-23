@@ -67,10 +67,11 @@ type LoginData struct {
 
 // TwoFAData holds the data passed to the 2FA template.
 type TwoFAData struct {
-	Nonce     string
-	CSRFToken string
-	Countdown int
-	Error     string
+	Nonce                 string
+	CSRFToken             string
+	Countdown             int
+	Error                 string
+	RequiresAuthenticator bool
 }
 
 // ProgressData holds the data passed to the progress template.

@@ -17,25 +17,27 @@ import (
 
 // mockWebClient implements the interfaces needed by handlers for testing.
 type mockWebClient struct {
-	initiateResult int
+	initiateResult client.LoginChallenge
 	initiateErr    error
 	completeErr    error
+	completeCode   string
 	closeCalled    bool
 	messages       chan client.Message
 }
 
 func newMockWebClient() *mockWebClient {
 	return &mockWebClient{
-		initiateResult: 60,
+		initiateResult: client.LoginChallenge{Countdown: 60},
 		messages:       make(chan client.Message, 100),
 	}
 }
 
-func (m *mockWebClient) InitiateWebLoginWithCredentials(phone, pin string) (int, error) {
+func (m *mockWebClient) InitiateWebLoginV2(phone, pin string) (client.LoginChallenge, error) {
 	return m.initiateResult, m.initiateErr
 }
 
-func (m *mockWebClient) CompleteWebLogin(code string) error {
+func (m *mockWebClient) CompleteWebLoginV2(_ context.Context, code string) error {
+	m.completeCode = code
 	return m.completeErr
 }
 
@@ -127,7 +129,7 @@ func TestHandleLogin_GET_RendersForm(t *testing.T) {
 
 func TestHandleLoginSubmit_POST_ValidCredentials_RedirectsTo2FA(t *testing.T) {
 	mock := newMockWebClient()
-	mock.initiateResult = 60
+	mock.initiateResult = client.LoginChallenge{Countdown: 60}
 	h, store := newTestHandlersWithMock(t, mock)
 
 	// Create a session first (as the GET handler would)
@@ -147,6 +149,26 @@ func TestHandleLoginSubmit_POST_ValidCredentials_RedirectsTo2FA(t *testing.T) {
 
 	assert.Equal(t, http.StatusSeeOther, rec.Code)
 	assert.Equal(t, "/twofa", rec.Header().Get("Location"))
+}
+
+func TestHandleLoginSubmit_AuthenticatorChallengeRendersCodeField(t *testing.T) {
+	mock := newMockWebClient()
+	mock.initiateResult = client.LoginChallenge{Countdown: 60, RequiresAuthenticator: true}
+	h, store := newTestHandlersWithMock(t, mock)
+	session := store.Create()
+	form := url.Values{"phone": {"+49123456789"}, "pin": {"1234"}}
+	req := httptest.NewRequest(http.MethodPost, "/login", strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.AddCookie(&http.Cookie{Name: sessionCookieName, Value: session.ID})
+	h.HandleLoginSubmit(httptest.NewRecorder(), req)
+
+	assert.True(t, session.RequiresAuthenticator)
+	getReq := httptest.NewRequest(http.MethodGet, "/twofa", nil)
+	getReq.AddCookie(&http.Cookie{Name: sessionCookieName, Value: session.ID})
+	rec := httptest.NewRecorder()
+	h.HandleTwoFA(rec, getReq)
+	assert.Contains(t, rec.Body.String(), `name="code"`)
+	assert.Contains(t, rec.Body.String(), "Authenticator code")
 }
 
 func TestHandleLoginSubmit_POST_InvalidPhone_ShowsError(t *testing.T) {
@@ -247,7 +269,8 @@ func TestHandleTwoFA_GET_RendersForm(t *testing.T) {
 
 	assert.Equal(t, http.StatusOK, rec.Code)
 	body := rec.Body.String()
-	assert.Contains(t, body, `name="code"`)
+	assert.NotContains(t, body, `name="code"`)
+	assert.Contains(t, body, "Continue after approval")
 	assert.Contains(t, body, "60")
 }
 
@@ -283,6 +306,7 @@ func TestHandleTwoFASubmit_POST_ValidCode_RedirectsToProgress(t *testing.T) {
 
 	assert.Equal(t, http.StatusSeeOther, rec.Code)
 	assert.Equal(t, "/progress", rec.Header().Get("Location"))
+	assert.Empty(t, mock.completeCode)
 
 	// Session should have been rotated (Finding 5: session fixation)
 	assert.Nil(t, store.Get(session.ID), "old session should be deleted after rotation")
@@ -302,6 +326,7 @@ func TestHandleTwoFASubmit_POST_InvalidCode_ShowsError(t *testing.T) {
 	h, store := newTestHandlers(t)
 	session := store.Create()
 	session.State = StateTwoFA
+	session.RequiresAuthenticator = true
 
 	form := url.Values{}
 	form.Set("csrf_token", session.CSRFToken)
@@ -316,7 +341,7 @@ func TestHandleTwoFASubmit_POST_InvalidCode_ShowsError(t *testing.T) {
 
 	assert.Equal(t, http.StatusOK, rec.Code)
 	body := rec.Body.String()
-	assert.Contains(t, body, "Invalid verification code")
+	assert.Contains(t, body, "Invalid authenticator code")
 }
 
 func TestHandleTwoFASubmit_POST_AuthError_ShowsError(t *testing.T) {
@@ -326,6 +351,7 @@ func TestHandleTwoFASubmit_POST_AuthError_ShowsError(t *testing.T) {
 	session := store.Create()
 	session.State = StateTwoFA
 	session.Client = mock
+	session.RequiresAuthenticator = true
 
 	form := url.Values{}
 	form.Set("csrf_token", session.CSRFToken)
@@ -341,6 +367,23 @@ func TestHandleTwoFASubmit_POST_AuthError_ShowsError(t *testing.T) {
 	assert.Equal(t, http.StatusOK, rec.Code)
 	body := rec.Body.String()
 	assert.Contains(t, body, "Verification failed")
+}
+
+func TestHandleTwoFASubmit_AuthenticatorCodeIsSubmitted(t *testing.T) {
+	mock := newMockWebClient()
+	h, store := newTestHandlersWithMock(t, mock)
+	session := store.Create()
+	session.State = StateTwoFA
+	session.RequiresAuthenticator = true
+	session.Client = mock
+	form := url.Values{"code": {"123456"}}
+	req := httptest.NewRequest(http.MethodPost, "/twofa", strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.AddCookie(&http.Cookie{Name: sessionCookieName, Value: session.ID})
+	rec := httptest.NewRecorder()
+	h.HandleTwoFASubmit(rec, req)
+	assert.Equal(t, http.StatusSeeOther, rec.Code)
+	assert.Equal(t, "123456", mock.completeCode)
 }
 
 // --- Progress handler tests ---
@@ -431,18 +474,18 @@ func TestValidatePhone(t *testing.T) {
 		valid bool
 	}{
 		{"+49123456789", true},
-		{"+1234567", true},       // Minimum length
+		{"+1234567", true},         // Minimum length
 		{"+123456789012345", true}, // Maximum length
 		{"", false},
-		{"49123456789", false},    // Missing +
-		{"+123", false},           // Too short
-		{"+1234567890123456", false}, // Too long
-		{"+49abc", false},         // Letters
-		{"+49 123 456", false},    // Spaces
-		{"' OR 1=1 --", false},    // SQL injection
+		{"49123456789", false},               // Missing +
+		{"+123", false},                      // Too short
+		{"+1234567890123456", false},         // Too long
+		{"+49abc", false},                    // Letters
+		{"+49 123 456", false},               // Spaces
+		{"' OR 1=1 --", false},               // SQL injection
 		{"<script>alert(1)</script>", false}, // XSS attempt
-		{"+49123456789\n", false}, // Newline injection
-		{"+49123456789\x00", false}, // Null byte
+		{"+49123456789\n", false},            // Newline injection
+		{"+49123456789\x00", false},          // Null byte
 	}
 
 	for _, tc := range tests {
@@ -460,10 +503,10 @@ func TestValidatePIN(t *testing.T) {
 		{"1234", true},
 		{"0000", true},
 		{"", false},
-		{"123", false},  // Too short
-		{"12345", false}, // Too long
-		{"abcd", false},  // Letters
-		{"12 4", false},  // Space
+		{"123", false},                       // Too short
+		{"12345", false},                     // Too long
+		{"abcd", false},                      // Letters
+		{"12 4", false},                      // Space
 		{"1234; DROP TABLE users;--", false}, // SQL injection
 		{"<script>", false},                  // XSS attempt
 		{"12\n4", false},                     // Newline injection
@@ -483,9 +526,10 @@ func TestValidateCode(t *testing.T) {
 	}{
 		{"1234", true},
 		{"0000", true},
+		{"123456", true},
 		{"", false},
 		{"123", false},
-		{"12345", false},
+		{"123456789", false},
 		{"abcd", false},
 		{"12;DROP", false}, // SQL injection
 		{"<img>", false},   // XSS attempt

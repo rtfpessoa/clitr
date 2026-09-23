@@ -27,16 +27,17 @@ const (
 // Session holds all per-user state for a single authentication flow.
 // All sensitive data lives exclusively in memory and is zeroed on cleanup.
 type Session struct {
-	ID           string
-	CSRFToken    string
-	State        SessionState
-	Countdown    int
-	CSVData      string
-	EventCount   int
-	Client       io.Closer // TR client; closed on session delete
-	CreatedAt    time.Time
-	LastActivity time.Time
-	ExpiresAt    time.Time
+	ID                    string
+	CSRFToken             string
+	State                 SessionState
+	Countdown             int
+	RequiresAuthenticator bool
+	CSVData               string
+	EventCount            int
+	Client                io.Closer // TR client; closed on session delete
+	CreatedAt             time.Time
+	LastActivity          time.Time
+	ExpiresAt             time.Time
 }
 
 // SessionStore is a concurrent-safe in-memory session store with TTL-based expiry.
@@ -137,16 +138,17 @@ func (s *SessionStore) Rotate(oldID string) *Session {
 
 	now := time.Now()
 	newSession := &Session{
-		ID:           generateRandomHex(32),
-		CSRFToken:    generateRandomHex(32),
-		State:        old.State,
-		Countdown:    old.Countdown,
-		CSVData:      old.CSVData,
-		EventCount:   old.EventCount,
-		Client:       old.Client, // Transfer client to new session
-		CreatedAt:    now,
-		LastActivity: now,
-		ExpiresAt:    now.Add(s.ttl),
+		ID:                    generateRandomHex(32),
+		CSRFToken:             generateRandomHex(32),
+		State:                 old.State,
+		Countdown:             old.Countdown,
+		RequiresAuthenticator: old.RequiresAuthenticator,
+		CSVData:               old.CSVData,
+		EventCount:            old.EventCount,
+		Client:                old.Client, // Transfer client to new session
+		CreatedAt:             now,
+		LastActivity:          now,
+		ExpiresAt:             now.Add(s.ttl),
 	}
 
 	// Zero old session (don't close client — it moved to newSession)
