@@ -4,15 +4,10 @@ import (
 	"context"
 	"fmt"
 	"os"
-	"path/filepath"
-	"strings"
-	"time"
 
 	"github.com/rtfpessoa/clitr/internal/client"
 	"github.com/rtfpessoa/clitr/internal/fetch"
-	"github.com/rtfpessoa/clitr/internal/json"
 	"github.com/rtfpessoa/clitr/internal/log"
-	"github.com/rtfpessoa/clitr/internal/types"
 	"github.com/spf13/cobra"
 	"go.uber.org/zap"
 )
@@ -157,48 +152,61 @@ func handleResetCredentials(reset bool, phoneNo string) error {
 
 func fetchEvents(ctx context.Context, trclient *client.Client, eventsDir string, incremental bool) ([]*rawEventFile, error) {
 	log.Info("Fetching transaction history")
-
-	var cursor *string
-	direction := fetch.DirectionAfter
-
+	start := fetchStart{direction: fetch.DirectionAfter}
 	if incremental {
-		meta, err := loadMetadata(eventsDir)
+		var err error
+		start, err = incrementalFetchStart(eventsDir)
 		if err != nil {
-			return nil, fmt.Errorf("failed to load metadata: %w", err)
-		}
-		if meta == nil {
-			log.Info("No previous events found, going to do a full fetch")
-		} else {
-			if meta.PendingCount > 0 {
-				log.Info("Found pending transactions from last fetch", zap.Int("count", meta.PendingCount))
-				var oldestPendingItem *pendingItem
-				for _, item := range meta.PendingItems {
-					if oldestPendingItem == nil || item.Timestamp.Before(oldestPendingItem.Timestamp) {
-						oldestPendingItem = &item
-					}
-				}
-
-				if oldestPendingItem == nil {
-					return nil, fmt.Errorf("failed to find pending transactions from last fetch")
-				}
-
-				cursor = oldestPendingItem.PageCursor
-			} else if meta.LatestPageCursor != nil {
-				cursor = meta.LatestPageCursor
-			}
-
-			direction = fetch.DirectionBefore
-			log.Info("Processing incremental fetch", zap.Any("fromItem", cursor))
+			return nil, err
 		}
 	}
 
-	rawEvents, err := fetchRawEvents(ctx, trclient, direction, cursor)
+	rawEvents, err := fetchRawEvents(ctx, trclient, start.direction, start.cursor)
 	if err != nil {
 		return nil, fmt.Errorf("failed to fetch events: %w", err)
 	}
 	log.Info("Retrieved transactions", zap.Int("count", len(rawEvents)))
 
 	return rawEvents, nil
+}
+
+type fetchStart struct {
+	direction fetch.Direction
+	cursor    *string
+}
+
+func incrementalFetchStart(eventsDir string) (fetchStart, error) {
+	meta, err := loadMetadata(eventsDir)
+	if err != nil {
+		return fetchStart{}, fmt.Errorf("failed to load metadata: %w", err)
+	}
+	if meta == nil {
+		log.Info("No previous events found, going to do a full fetch")
+		return fetchStart{direction: fetch.DirectionAfter}, nil
+	}
+	start := fetchStart{direction: fetch.DirectionBefore, cursor: meta.LatestPageCursor}
+	if meta.PendingCount > 0 {
+		log.Info("Found pending transactions from last fetch", zap.Int("count", meta.PendingCount))
+		start.cursor, err = oldestPendingCursor(meta.PendingItems)
+		if err != nil {
+			return fetchStart{}, err
+		}
+	}
+	log.Info("Processing incremental fetch", zap.Any("fromItem", start.cursor))
+	return start, nil
+}
+
+func oldestPendingCursor(items []pendingItem) (*string, error) {
+	if len(items) == 0 {
+		return nil, fmt.Errorf("failed to find pending transactions from last fetch")
+	}
+	oldest := &items[0]
+	for i := 1; i < len(items); i++ {
+		if items[i].Timestamp.Before(oldest.Timestamp) {
+			oldest = &items[i]
+		}
+	}
+	return oldest.PageCursor, nil
 }
 
 // fetchRawEvents delegates to fetch.FetchAllEvents and converts the raw maps
@@ -228,142 +236,4 @@ func convertMapsToRawEventFiles(rawMaps []map[string]interface{}, fallbackCursor
 		result = append(result, raw)
 	}
 	return result
-}
-
-func saveRawEvents(rawEvents []*rawEventFile, dir string) error {
-	// Create data directory if it doesn't exist
-	if err := os.MkdirAll(dir, 0755); err != nil {
-		return fmt.Errorf("failed to create data directory: %w", err)
-	}
-
-	log.Info("Saving raw data", zap.String("dir", dir))
-
-	// Save each raw event to individual JSON file
-	for _, rawEvent := range rawEvents {
-		rawEventData, err := json.Marshal(rawEvent)
-		if err != nil {
-			return fmt.Errorf("failed to marshal raw event: %w", err)
-		}
-
-		eventMap, _ := rawEvent.TimelineEvent.(map[string]interface{})
-		timestamp, _ := eventMap["timestamp"].(string)
-		id, _ := eventMap["id"].(string)
-
-		if len(timestamp) < 10 || id == "" {
-			log.Warn("Skipping event with missing id or timestamp", zap.String("id", id), zap.String("timestamp", timestamp))
-			continue
-		}
-
-		date := timestamp[:10]
-		filename := fmt.Sprintf("%s_%s.json", date, id)
-		filePath := filepath.Join(dir, filename)
-
-		if err := os.WriteFile(filePath, rawEventData, 0644); err != nil {
-			return fmt.Errorf("failed to write raw event file: %w", err)
-		}
-	}
-
-	// Save metadata
-	if err := saveMetadata(rawEvents, dir); err != nil {
-		return err
-	}
-
-	log.Info("Successfully saved transactions",
-		zap.Int("count", len(rawEvents)),
-		zap.String("dir", dir))
-	return nil
-}
-
-type pendingItem struct {
-	EventID    string    `json:"event_id"`
-	Timestamp  time.Time `json:"timestamp"`
-	PageCursor *string   `json:"page_cursor"`
-}
-
-type metadata struct {
-	LastFetch time.Time `json:"last_fetch"`
-
-	EventCount           int       `json:"event_count"`
-	LatestEventTimestamp time.Time `json:"latest_event_ts"`
-
-	PendingCount int           `json:"pending_count"`
-	PendingItems []pendingItem `json:"pending_items"`
-
-	LatestPageCursor *string `json:"latest_page_cursor"`
-}
-
-func saveMetadata(rawEvents []*rawEventFile, dir string) error {
-	var pendingItems []pendingItem
-
-	var latestTimestamp time.Time
-	var latestCursor *string
-
-	for _, rawEvent := range rawEvents {
-		eventMap, _ := rawEvent.TimelineEvent.(map[string]interface{})
-		status, _ := eventMap["status"].(string)
-		timestampStr, _ := eventMap["timestamp"].(string)
-		id, _ := eventMap["id"].(string)
-
-		timestamp, err := time.Parse(types.TimestampLayout, timestampStr)
-		if err != nil {
-			log.Warn("Failed to parse timestamp for metadata", zap.String("id", id), zap.String("timestamp", timestampStr), zap.Error(err))
-			continue
-		}
-
-		statusUpper := strings.ToUpper(status)
-		if statusUpper != "EXECUTED" && statusUpper != "CANCELED" {
-			pendingItems = append(pendingItems, pendingItem{
-				EventID:    id,
-				Timestamp:  timestamp,
-				PageCursor: rawEvent.PageCursor,
-			})
-		}
-
-		if timestamp.After(latestTimestamp) {
-			latestTimestamp = timestamp
-			latestCursor = rawEvent.PageCursor
-		}
-	}
-
-	meta := metadata{
-		LastFetch: time.Now(),
-
-		EventCount: len(rawEvents),
-
-		PendingCount: len(pendingItems),
-		PendingItems: pendingItems,
-
-		LatestEventTimestamp: latestTimestamp,
-		LatestPageCursor:     latestCursor,
-	}
-
-	metadataBytes, err := json.Marshal(meta)
-	if err != nil {
-		return fmt.Errorf("failed to marshal metadata: %w", err)
-	}
-
-	if err := os.WriteFile(filepath.Join(dir, "metadata.json"), metadataBytes, 0644); err != nil {
-		return fmt.Errorf("failed to save metadata: %w", err)
-	}
-
-	return nil
-}
-
-func loadMetadata(dataDir string) (*metadata, error) {
-	metadataPath := filepath.Join(dataDir, "metadata.json")
-
-	data, err := os.ReadFile(metadataPath)
-	if err != nil {
-		if os.IsNotExist(err) {
-			return nil, nil
-		}
-		return nil, fmt.Errorf("failed to read metadata: %w", err)
-	}
-
-	var meta metadata
-	if err := json.Unmarshal(data, &meta); err != nil {
-		return nil, fmt.Errorf("failed to unmarshal metadata: %w", err)
-	}
-
-	return &meta, nil
 }

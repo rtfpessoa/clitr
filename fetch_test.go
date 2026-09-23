@@ -11,6 +11,17 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+func TestOldestPendingCursor(t *testing.T) {
+	newer, older := "newer", "older"
+	items := []pendingItem{
+		{Timestamp: time.Date(2025, 1, 3, 0, 0, 0, 0, time.UTC), PageCursor: &newer},
+		{Timestamp: time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC), PageCursor: &older},
+	}
+	cursor, err := oldestPendingCursor(items)
+	require.NoError(t, err)
+	assert.Equal(t, &older, cursor)
+}
+
 func TestSaveMetadata_WithPendingItems(t *testing.T) {
 	tmpDir := t.TempDir()
 
