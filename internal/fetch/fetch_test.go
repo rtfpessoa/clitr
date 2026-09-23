@@ -420,6 +420,13 @@ func TestFetchAllEvents_ErrorFromWebSocket(t *testing.T) {
 	assert.Contains(t, err.Error(), "websocket connection lost")
 }
 
+func TestFetchAllEvents_ClosedResponseChannel(t *testing.T) {
+	mock := newMockClient()
+	close(mock.msgCh)
+	_, err := FetchAllEvents(context.Background(), mock, DirectionAfter, nil, nil)
+	require.ErrorContains(t, err, "timeline response channel closed")
+}
+
 func TestFetchAllEvents_ContextCancellation(t *testing.T) {
 	mock := newMockClient()
 	ctx, cancel := context.WithCancel(context.Background())
