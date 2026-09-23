@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"errors"
 	"fmt"
+	"io"
 	"net/url"
 	"strings"
 
@@ -13,6 +14,11 @@ import (
 
 // UserAgentHeaderValue is the User-Agent header sent to Trade Republic's API.
 const UserAgentHeaderValue = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/146.0.0.0 Safari/537.36"
+
+// setStdinReader replaces the CLI input source in tests.
+func (c *Client) setStdinReader(reader io.Reader) {
+	c.stdinReader = reader
+}
 
 func (c *Client) collectPin(phoneNumber string) (string, string, error) {
 	return collectPinWithReader(bufio.NewReader(c.stdinReader), phoneNumber)

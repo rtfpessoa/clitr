@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -99,24 +100,20 @@ func TestParseMessage_ErrorMessage(t *testing.T) {
 }
 
 func TestCalculateDelta_AddOperation(t *testing.T) {
-	client := &Client{}
-
 	// URL-encoded JSON: {"status":"new"}
 	// Note: The + sign is trimmed, so include leading space in expected
-	result := client.calculateDelta("", "+%7B%22status%22%3A%22new%22%7D")
+	result := calculateDelta("", "+%7B%22status%22%3A%22new%22%7D")
 
 	// The implementation URL-decodes the content after the + sign
 	assert.Contains(t, result, `"status":"new"`)
 }
 
 func TestCalculateDelta_MixedOperations(t *testing.T) {
-	client := &Client{}
-
 	// Previous: "Hello World"
 	// Delta: keep first 6 chars (=6), then add URL-encoded "Go"
 	// Note: In URL encoding, + becomes space, so use %20 or just regular chars
 	// Tab-separated operations
-	result := client.calculateDelta("Hello World", "=6\t+Go")
+	result := calculateDelta("Hello World", "=6\t+Go")
 
 	// The + in "+Go" gets URL-decoded to " Go" (+ = space in URL encoding)
 	assert.Equal(t, "Hello  Go", result)
@@ -276,6 +273,34 @@ func TestSubscribe_IncrementsID(t *testing.T) {
 	assert.Equal(t, "1", subID2)
 
 	<-done
+}
+
+func TestConnectWSRetriesAfterRejectedHandshake(t *testing.T) {
+	var attempts atomic.Int32
+	server := setupWSTestServer(t, func(conn *websocket.Conn) {
+		_, _, err := conn.Read(context.Background())
+		if err != nil {
+			return
+		}
+		if attempts.Add(1) == 1 {
+			_ = conn.Write(context.Background(), websocket.MessageText, []byte("rejected"))
+			return
+		}
+		_ = conn.Write(context.Background(), websocket.MessageText, []byte("connected"))
+		_, _, _ = conn.Read(context.Background())
+	})
+	defer server.Close()
+
+	c, err := NewClient("+1234567890", t.TempDir(), false)
+	require.NoError(t, err)
+	defer func() { _ = c.Close() }()
+	c.setWSHost("ws://" + strings.TrimPrefix(server.URL, "http://"))
+
+	_, err = c.Subscribe(context.Background(), map[string]interface{}{"type": "portfolio"})
+	require.ErrorContains(t, err, "connection failed")
+	_, err = c.Subscribe(context.Background(), map[string]interface{}{"type": "portfolio"})
+	require.NoError(t, err)
+	assert.EqualValues(t, 2, attempts.Load())
 }
 
 func TestUnsubscribe_RemovesSubscription(t *testing.T) {
@@ -476,10 +501,14 @@ func TestReceiveLoop_CompleteMessage(t *testing.T) {
 	require.NoError(t, err)
 
 	// Verify subscription exists before complete
+	client.mu.Lock()
 	_, exists := client.subscriptions[subID]
+	client.mu.Unlock()
 	assert.True(t, exists)
 
 	require.Eventually(t, func() bool {
+		client.mu.Lock()
+		defer client.mu.Unlock()
 		_, exists := client.subscriptions[subID]
 		return !exists
 	}, 5*time.Second, 10*time.Millisecond)

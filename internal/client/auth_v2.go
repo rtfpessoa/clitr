@@ -50,6 +50,17 @@ type loginStartResponse struct {
 	CountdownInSeconds int    `json:"countdownInSeconds"`
 }
 
+type loginCredentials struct {
+	phoneNumber string
+	pin         string
+}
+
+type v2RequestSpec struct {
+	method  string
+	path    string
+	payload any
+}
+
 // InitiateWebLoginV2 starts Trade Republic's push approval login.
 // The v2 endpoint reaches the application without the WAF token needed by v1.
 func (c *Client) InitiateWebLoginV2(phoneNo, pin string) (LoginChallenge, error) {
@@ -58,7 +69,7 @@ func (c *Client) InitiateWebLoginV2(phoneNo, pin string) (LoginChallenge, error)
 	c.v2RequiresAuthenticator = false
 	c.v2Deadline = time.Time{}
 
-	result, err := startV2Login(c, phoneNo, pin)
+	result, err := startV2Login(c, loginCredentials{phoneNumber: phoneNo, pin: pin})
 	if err != nil {
 		return challenge, err
 	}
@@ -87,13 +98,16 @@ func challengeFromV2Process(result loginStartResponse, process loginProcess) (Lo
 	}, deadline
 }
 
-func startV2Login(c *Client, phoneNo, pin string) (loginStartResponse, error) {
+func startV2Login(c *Client, credentials loginCredentials) (loginStartResponse, error) {
 	var result loginStartResponse
 	if err := ensureV2DeviceInfo(c); err != nil {
 		return result, err
 	}
-	req, err := newV2Request(c, context.Background(), http.MethodPost, webLoginV2Path,
-		map[string]string{"phoneNumber": phoneNo, "pin": pin})
+	req, err := newV2Request(c, context.Background(), v2RequestSpec{
+		method:  http.MethodPost,
+		path:    webLoginV2Path,
+		payload: map[string]string{"phoneNumber": credentials.phoneNumber, "pin": credentials.pin},
+	})
 	if err != nil {
 		return result, err
 	}
@@ -176,7 +190,11 @@ func checkV2Approval(ctx context.Context, status string) (bool, error) {
 
 func submitV2AuthenticatorCode(c *Client, ctx context.Context, code string) error {
 	path := webLoginV2Path + "/processes/" + url.PathEscape(c.processID) + "/authenticator-verification"
-	req, err := newV2Request(c, ctx, http.MethodPost, path, map[string]string{"code": code})
+	req, err := newV2Request(c, ctx, v2RequestSpec{
+		method:  http.MethodPost,
+		path:    path,
+		payload: map[string]string{"code": code},
+	})
 	if err != nil {
 		return err
 	}
@@ -186,7 +204,7 @@ func submitV2AuthenticatorCode(c *Client, ctx context.Context, code string) erro
 func getV2LoginProcess(c *Client, ctx context.Context) (loginProcess, error) {
 	var process loginProcess
 	path := webLoginV2Path + "/processes/" + url.PathEscape(c.processID)
-	req, err := newV2Request(c, ctx, http.MethodGet, path, nil)
+	req, err := newV2Request(c, ctx, v2RequestSpec{method: http.MethodGet, path: path})
 	if err != nil {
 		return process, err
 	}
@@ -194,21 +212,21 @@ func getV2LoginProcess(c *Client, ctx context.Context) (loginProcess, error) {
 	return process, err
 }
 
-func newV2Request(c *Client, ctx context.Context, method, path string, payload any) (*http.Request, error) {
+func newV2Request(c *Client, ctx context.Context, spec v2RequestSpec) (*http.Request, error) {
 	var body io.Reader
-	if payload != nil {
-		data, err := stdjson.Marshal(payload)
+	if spec.payload != nil {
+		data, err := stdjson.Marshal(spec.payload)
 		if err != nil {
 			return nil, fmt.Errorf("marshal v2 request: %w", err)
 		}
 		body = bytes.NewReader(data)
 	}
-	req, err := http.NewRequestWithContext(ctx, method, c.apiHost+path, body)
+	req, err := http.NewRequestWithContext(ctx, spec.method, c.apiHost+spec.path, body)
 	if err != nil {
 		return nil, fmt.Errorf("create v2 request: %w", err)
 	}
 	setV2Headers(c, req)
-	if payload != nil {
+	if spec.payload != nil {
 		req.Header.Set("Content-Type", "application/json")
 	}
 	return req, nil
