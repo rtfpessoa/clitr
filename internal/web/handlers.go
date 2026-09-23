@@ -1,16 +1,12 @@
 package web
 
 import (
-	"bytes"
 	"context"
-	"fmt"
 	"net/http"
 	"regexp"
 	"time"
 
 	"github.com/rtfpessoa/clitr/internal/client"
-	"github.com/rtfpessoa/clitr/internal/export"
-	"github.com/rtfpessoa/clitr/internal/fetch"
 	"github.com/rtfpessoa/clitr/internal/log"
 	"go.uber.org/zap"
 )
@@ -266,112 +262,6 @@ func (h *Handlers) HandleProgress(w http.ResponseWriter, r *http.Request) {
 	}); err != nil {
 		log.Error("Failed to render progress template", zap.Error(err))
 	}
-}
-
-// HandleProgressSSE streams Server-Sent Events during transaction fetching
-// (GET /progress/events).
-func (h *Handlers) HandleProgressSSE(w http.ResponseWriter, r *http.Request) {
-	session := h.getSession(r)
-	if session == nil || session.State != StateFetching {
-		http.Error(w, "No active fetch session", http.StatusBadRequest)
-		return
-	}
-
-	flusher, ok := w.(http.Flusher)
-	if !ok {
-		http.Error(w, "SSE not supported", http.StatusInternalServerError)
-		return
-	}
-
-	wc, ok := session.Client.(WebClient)
-	if !ok || wc == nil {
-		http.Error(w, "No client available", http.StatusBadRequest)
-		return
-	}
-
-	// Set SSE headers
-	w.Header().Set("Content-Type", "text/event-stream")
-	w.Header().Set("Cache-Control", "no-cache")
-	w.Header().Set("Connection", "keep-alive")
-	w.Header().Set("X-Accel-Buffering", "no") // Disable nginx buffering
-	flusher.Flush()
-
-	ctx := r.Context()
-
-	// Finding 2: Send heartbeats during fetching to prevent timeout
-	heartbeatDone := make(chan struct{})
-	go func() {
-		ticker := time.NewTicker(15 * time.Second)
-		defer ticker.Stop()
-		for {
-			select {
-			case <-ticker.C:
-				// SSE comment for keepalive (not an event, browsers ignore it)
-				fmt.Fprintf(w, ": keepalive\n\n")
-				flusher.Flush()
-			case <-heartbeatDone:
-				return
-			case <-ctx.Done():
-				return
-			}
-		}
-	}()
-	defer close(heartbeatDone)
-
-	// Fetch all events with progress callback
-	rawMaps, err := fetch.FetchAllEvents(ctx, wc, fetch.DirectionAfter, nil,
-		func(page int, eventsSoFar int) {
-			fmt.Fprintf(w, "event: progress\ndata: {\"page\":%d,\"events\":%d}\n\n", page, eventsSoFar)
-			flusher.Flush()
-			h.store.Touch(session.ID)
-		},
-	)
-	if err != nil {
-		log.Error("Fetch failed", zap.Error(err))
-		fmt.Fprintf(w, "event: error_event\ndata: Failed to fetch transactions. Please try again.\n\n")
-		flusher.Flush()
-		return
-	}
-
-	// Convert raw maps to typed events for export
-	rawEvents, err := fetch.ParseRawMaps(rawMaps)
-	if err != nil {
-		log.Error("Parse raw maps failed", zap.Error(err))
-		fmt.Fprintf(w, "event: error_event\ndata: Failed to parse transactions.\n\n")
-		flusher.Flush()
-		return
-	}
-
-	// Parse raw events into typed events
-	events, err := export.ParseRawEvents(rawEvents)
-	if err != nil {
-		log.Error("Parse failed", zap.Error(err))
-		fmt.Fprintf(w, "event: error_event\ndata: Failed to parse transactions.\n\n")
-		flusher.Flush()
-		return
-	}
-
-	// Convert to CSV
-	var csvBuf bytes.Buffer
-	exporter := export.NewCSVExporter(&csvBuf)
-	if err := exporter.Export(events, true); err != nil {
-		log.Error("CSV export failed", zap.Error(err))
-		fmt.Fprintf(w, "event: error_event\ndata: Failed to generate CSV.\n\n")
-		flusher.Flush()
-		return
-	}
-
-	// Store CSV in session
-	session.CSVData = csvBuf.String()
-	session.EventCount = len(events)
-	session.State = StateDone
-	h.store.Touch(session.ID)
-
-	log.Info("Fetch complete", zap.Int("events", len(events)))
-
-	// Send done event
-	fmt.Fprintf(w, "event: done\ndata: ok\n\n")
-	flusher.Flush()
 }
 
 // HandleResult renders the CSV result page (GET /result).
