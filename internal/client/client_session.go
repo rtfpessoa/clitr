@@ -44,6 +44,14 @@ func (c *Client) refreshWebSession() error {
 	}
 
 	c.webSessionTokenExpires = time.Now().Add(webSessionLifetime)
+
+	// Trade Republic may rotate tr_session/tr_refresh on each refresh. Persist
+	// the updated cookie jar so the next invocation doesn't try to reuse
+	// stale, already-rotated cookies and get forced into a full re-login.
+	if err := c.SaveCookies(); err != nil {
+		log.Warn("failed to persist refreshed session cookies", zap.Error(err))
+	}
+
 	return nil
 }
 
@@ -53,12 +61,15 @@ func sessionRefreshError(c *Client, resp *http.Response) error {
 		log.Error("failed to read response body", zap.Error(err))
 	}
 	if strings.Contains(string(bodyText), "AUTHENTICATION_ERROR") {
-		if err := c.ResetCookies(); err == nil {
-			log.Debug("cookies reset successfully")
-			return ErrCookiesReset
-		} else {
-			log.Error("failed to reset cookies", zap.Error(err))
+		// The server has definitively told us the session is invalid, so we
+		// must report ErrCookiesReset regardless of whether clearing the
+		// stored copy succeeds - that's just best-effort cleanup and its
+		// failure (e.g. keyring unavailable) must not be mistaken for a
+		// transient error, which would block the fallback to a fresh login.
+		if err := c.ResetCookies(); err != nil {
+			log.Warn("failed to clear stored cookies after session invalidation", zap.Error(err))
 		}
+		return ErrCookiesReset
 	}
 	return fmt.Errorf("session refresh failed with status %d: %s", resp.StatusCode, bodyText)
 }

@@ -18,7 +18,7 @@ const (
 
 	dataDirFlagKeyShort = "d"
 	dataDirFlagKeyLong  = "data-dir"
-	defaultDataDir      = "~/.local/share/clitr"
+	defaultDataDir      = "~/.config/clitr"
 )
 
 type rootConfig struct {

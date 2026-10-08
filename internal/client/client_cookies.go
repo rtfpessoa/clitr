@@ -12,6 +12,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/rtfpessoa/clitr/internal/json"
@@ -32,14 +33,18 @@ type savedCookie struct {
 	SameSite int       `json:"ss,omitempty"`
 }
 
-// ResetCookies removes the saved session from the system keyring.
+// ResetCookies removes the saved session from the system keyring and legacy file.
 func (c *Client) ResetCookies() error {
 	keyringKey := keyringKeyPfx + c.phoneNo
 	if err := keyring.Delete(keyringService, keyringKey); err != nil {
-		if errors.Is(err, keyring.ErrNotFound) {
-			return nil // Nothing to delete
+		if !errors.Is(err, keyring.ErrNotFound) {
+			return fmt.Errorf("failed to delete cookies from keyring: %w", err)
 		}
-		return fmt.Errorf("failed to delete cookies from keyring: %w", err)
+	}
+
+	legacyPath := filepath.Join(c.dataDir, "auth", fmt.Sprintf("cookies.%s.json", c.phoneNo))
+	if err := os.Remove(legacyPath); err != nil && !os.IsNotExist(err) {
+		return fmt.Errorf("failed to delete legacy cookie file: %w", err)
 	}
 	return nil
 }
@@ -61,17 +66,34 @@ func (c *Client) SaveCookies() error {
 		return nil
 	}
 
-	encoded, err := encodeCookies(cookies)
+	jsonData, err := marshalCookies(cookies)
+	if err != nil {
+		return err
+	}
+
+	encoded, err := encodeCookies(jsonData)
 	if err != nil {
 		return err
 	}
 	if err := keyring.Set(keyringService, keyringKeyPfx+c.phoneNo, encoded); err != nil {
-		return fmt.Errorf("failed to save cookies to keyring: %w", err)
+		log.Debug("keyring unavailable, falling back to legacy file", zap.Error(err))
+		return c.saveLegacyCookies(jsonData)
 	}
 	return nil
 }
 
-func encodeCookies(cookies []*http.Cookie) (string, error) {
+func (c *Client) saveLegacyCookies(jsonData []byte) error {
+	legacyPath := filepath.Join(c.dataDir, "auth", fmt.Sprintf("cookies.%s.json", c.phoneNo))
+	if err := os.MkdirAll(filepath.Dir(legacyPath), 0o700); err != nil {
+		return fmt.Errorf("failed to create legacy cookie dir: %w", err)
+	}
+	if err := os.WriteFile(legacyPath, jsonData, 0o600); err != nil {
+		return fmt.Errorf("failed to save cookies to legacy file: %w", err)
+	}
+	return nil
+}
+
+func marshalCookies(cookies []*http.Cookie) ([]byte, error) {
 	var cookieList []savedCookie
 	for _, cookie := range cookies {
 		cookieList = append(cookieList, savedCookie{
@@ -88,9 +110,12 @@ func encodeCookies(cookies []*http.Cookie) (string, error) {
 
 	jsonData, err := json.Marshal(cookieList)
 	if err != nil {
-		return "", fmt.Errorf("failed to marshal cookies: %w", err)
+		return nil, fmt.Errorf("failed to marshal cookies: %w", err)
 	}
+	return jsonData, nil
+}
 
+func encodeCookies(jsonData []byte) (string, error) {
 	// Compress with gzip to reduce size for keyring storage limits
 	var compressed bytes.Buffer
 	gzWriter := gzip.NewWriter(&compressed)
@@ -215,8 +240,47 @@ func (c *Client) parseCookiesIntoJar(data []byte) error {
 			HttpOnly: sc.HttpOnly,
 			SameSite: http.SameSite(sc.SameSite),
 		})
+		logJWTExpiry(sc.Name, sc.Value)
 	}
 
 	c.httpClient.Jar.SetCookies(parsedURL, cookies)
 	return nil
+}
+
+// jwtClaims holds the subset of claims we care about for debug logging.
+// Unknown fields are ignored (not using the strict internal/json decoder).
+type jwtClaims struct {
+	IssuedAt int64 `json:"iat"`
+	Expires  int64 `json:"exp"`
+}
+
+// logJWTExpiry decodes the JWT payload of any cookie whose value looks like
+// a JWT (without verifying the signature) and logs its iat/exp claims at
+// debug level, so expired-session issues can be diagnosed without manually
+// decoding tokens. We don't know Trade Republic's actual session cookie
+// name(s) in advance, so this inspects every cookie rather than matching on
+// a fixed name, and silently skips anything that isn't a 3-part JWT with
+// iat/exp claims instead of logging noise for ordinary cookies.
+func logJWTExpiry(name, value string) {
+	parts := strings.Split(value, ".")
+	if len(parts) != 3 {
+		return
+	}
+
+	payload, err := base64.RawURLEncoding.DecodeString(parts[1])
+	if err != nil {
+		return
+	}
+
+	var claims jwtClaims
+	if err := stdjson.Unmarshal(payload, &claims); err != nil || claims.Expires == 0 {
+		return
+	}
+
+	log.Debug("JWT cookie claims",
+		zap.String("cookie", name),
+		zap.Time("issuedAt", time.Unix(claims.IssuedAt, 0)),
+		zap.Time("expires", time.Unix(claims.Expires, 0)),
+		zap.Duration("ttl", time.Unix(claims.Expires, 0).Sub(time.Unix(claims.IssuedAt, 0))),
+	)
 }

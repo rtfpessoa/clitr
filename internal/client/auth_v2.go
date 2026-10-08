@@ -289,6 +289,9 @@ func v2LoginResponseError(resp *http.Response, data []byte) error {
 	if resp.StatusCode == http.StatusMethodNotAllowed && len(data) == 0 && strings.Contains(strings.ToLower(resp.Header.Get("Server")), "awselb") {
 		return fmt.Errorf("Trade Republic's WAF rejected the login request (HTTP 405); try again later")
 	}
+	if resp.StatusCode == http.StatusTooManyRequests {
+		return fmt.Errorf("%w (HTTP 429)", ErrRateLimited)
+	}
 	var result struct {
 		Errors []struct {
 			Code string `json:"errorCode"`

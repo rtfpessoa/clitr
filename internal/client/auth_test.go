@@ -29,16 +29,42 @@ func TestResumeWebSession_ValidSession(t *testing.T) {
 	require.NoError(t, err)
 	c.setAPIHost(server.URL)
 	c.httpClient.Jar.SetCookies(
-		mustParseURL("https://api.traderepublic.com/api/v1/auth/web"),
+		mustParseURL("https://api.traderepublic.com"),
 		[]*http.Cookie{{Name: "session", Value: "test-session"}},
 	)
-	assert.True(t, c.resumeWebSession())
+	resumed, err := c.resumeWebSession()
+	require.NoError(t, err)
+	assert.True(t, resumed)
 }
 
 func TestResumeWebSession_InvalidSession(t *testing.T) {
 	c, err := NewClient("+1234567890", t.TempDir(), false)
 	require.NoError(t, err)
-	assert.False(t, c.resumeWebSession())
+	resumed, err := c.resumeWebSession()
+	require.NoError(t, err)
+	assert.False(t, resumed)
+}
+
+func TestResumeWebSession_TransientFailureDoesNotClaimInvalid(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/api/v1/auth/web/session" {
+			w.WriteHeader(http.StatusOK)
+			return
+		}
+		w.WriteHeader(http.StatusBadGateway)
+	}))
+	defer server.Close()
+
+	c, err := NewClient("+1234567890", t.TempDir(), true)
+	require.NoError(t, err)
+	c.setAPIHost(server.URL)
+	c.httpClient.Jar.SetCookies(
+		mustParseURL("https://api.traderepublic.com"),
+		[]*http.Cookie{{Name: "session", Value: "test-session"}},
+	)
+	resumed, err := c.resumeWebSession()
+	assert.Error(t, err)
+	assert.False(t, resumed)
 }
 
 func mustParseURL(rawURL string) *url.URL {

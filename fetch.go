@@ -84,6 +84,10 @@ func runFetch(ctx context.Context, config *fetchConfig) error {
 		return err
 	}
 
+	// Resolve the phone number (falling back to pin.env's PHONE entry) before
+	// constructing the client, so cookie load/save use a consistent key.
+	config.phoneNo = client.ResolvePhoneNumber(config.phoneNo, config.dataDir)
+
 	if err := handleResetCredentials(resetCredentials, config.phoneNo); err != nil {
 		return err
 	}

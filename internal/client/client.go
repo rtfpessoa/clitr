@@ -19,8 +19,17 @@ import (
 
 const (
 	defaultAPIHost = "https://api.traderepublic.com"
-	cookiesHost    = "https://api.traderepublic.com/api/v1/auth/web"
-	wsHost         = "wss://api.traderepublic.com"
+	// cookiesHost is a bare-origin URL (no path) used solely to query/restore
+	// cookies from the jar. http.CookieJar.Cookies() only ever returns a
+	// cookie's Name/Value (Path, Domain, Expires are not exposed), so on
+	// reload SetCookies() falls back to RFC 6265's default-path algorithm,
+	// which derives the path from this URL. Trade Republic's session cookies
+	// are actually scoped to Path=/, so this must have an empty path too -
+	// otherwise reloaded cookies get scoped to whatever path segment happens
+	// to be here and silently stop being sent on most requests after the
+	// process restarts, forcing an unnecessary full re-login.
+	cookiesHost = "https://api.traderepublic.com"
+	wsHost      = "wss://api.traderepublic.com"
 
 	// Keyring constants for secure credential storage
 	keyringService = "clitr"
@@ -29,6 +38,7 @@ const (
 
 var (
 	ErrCookiesReset = errors.New("cookies reset")
+	ErrRateLimited  = errors.New("rate limited by Trade Republic")
 )
 
 // closeBody closes an io.ReadCloser, logging any error. Use with defer on response bodies.
